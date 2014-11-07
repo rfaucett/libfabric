@@ -61,9 +61,7 @@
 
 #include "usnic_direct.h"
 #include "usdf.h"
-#ifdef OMPI_SFI
 #include "fi_usnic.h"
-#endif
 
 static int
 usdf_freeinfo(struct fi_info *info)
@@ -128,6 +126,7 @@ usdf_fill_addr_info(struct fi_info *fi, struct fi_info *hints,
 		struct usd_device_attrs *dap)
 {
 	struct sockaddr_in *sin;
+	struct fi_usnic_info *uip;
 	int ret;
 
 	/* If hints speficied, we already validated requested addr_format */
@@ -168,16 +167,12 @@ usdf_fill_addr_info(struct fi_info *fi, struct fi_info *hints,
 		}
 		break;
 	default:
-		break;
+		ret = -FI_ENODATA;
+		goto fail;
 	}
 
-#ifdef OMPI_SFI
-	{
-		struct fi_usnic_info *uip;
-		uip = fi->prov_info;
-		uip->ui_netmask_be = dap->uda_netmask_be;
-	}
-#endif
+	uip = fi->prov_info;
+	uip->ui_netmask_be = dap->uda_netmask_be;
 
 	return 0;
 
@@ -202,6 +197,7 @@ usdf_fill_info_dgram(
 	struct fi_tx_ctx_attr *txattr;
 	struct fi_rx_ctx_attr *rxattr;
 	struct fi_ep_attr *eattrp;
+	struct fi_usnic_info *uip;
 	int ret;
 
 	/* check that we are capable of what's requested */
@@ -219,6 +215,13 @@ usdf_fill_info_dgram(
 		ret = -FI_ENOMEM;
 		goto fail;
 	}
+	uip = calloc(1, sizeof(*uip));
+	if (uip == NULL) {
+		ret = -FI_ENOMEM;
+		goto fail;
+	}
+	fi->prov_info = uip;
+	fi->prov_info_len = sizeof(*uip);
 
 	fi->caps = USDF_DGRAM_CAPS;
 
@@ -228,17 +231,12 @@ usdf_fill_info_dgram(
 		fi->mode = USDF_DGRAM_SUPP_MODE;
 	}
 	fi->ep_type = FI_EP_DGRAM;
-#ifdef OMPI_SFI
-	{
-		struct fi_usnic_info *uip;
-		uip = fi->prov_info;
-		uip->ui_link_speed = dap->uda_bandwidth;
-		strcpy(uip->ui_ifname, dap->uda_ifname);
-		uip->ui_num_vf = dap->uda_num_vf;
-		uip->ui_qp_per_vf = dap->uda_qp_per_vf;
-		uip->ui_cq_per_vf = dap->uda_cq_per_vf;
-	}
-#endif
+
+	uip->ui_link_speed = dap->uda_bandwidth;
+	strcpy(uip->ui_ifname, dap->uda_ifname);
+	uip->ui_num_vf = dap->uda_num_vf;
+	uip->ui_qp_per_vf = dap->uda_qp_per_vf;
+	uip->ui_cq_per_vf = dap->uda_cq_per_vf;
 
 	ret = usdf_fill_addr_info(fi, hints, src, dest, dap);
 	if (ret != 0) {
@@ -322,6 +320,7 @@ usdf_fill_info_msg(
 	struct fi_tx_ctx_attr *txattr;
 	struct fi_rx_ctx_attr *rxattr;
 	struct fi_ep_attr *eattrp;
+	struct fi_usnic_info *uip;
 	int ret;
 
 	/* check that we are capable of what's requested */
@@ -348,6 +347,14 @@ usdf_fill_info_msg(
 		fi->mode = USDF_MSG_SUPP_MODE;
 	}
 	fi->ep_type = FI_EP_MSG;
+
+	uip = fi->prov_info;
+	uip->ui_link_speed = dap->uda_bandwidth;
+	strcpy(uip->ui_ifname, dap->uda_ifname);
+	uip->ui_num_vf = dap->uda_num_vf;
+	uip->ui_qp_per_vf = dap->uda_qp_per_vf;
+	uip->ui_cq_per_vf = dap->uda_cq_per_vf;
+
 
 	ret = usdf_fill_addr_info(fi, hints, src, dest, dap);
 	if (ret != 0) {

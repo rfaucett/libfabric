@@ -65,11 +65,12 @@ ssize_t usdf_dgram_senddata(struct fid_ep *ep, const void *buf, size_t len,
 	void *desc, uint64_t data, void *context);
 ssize_t usdf_dgram_senddatato(struct fid_ep *ep, const void *buf, size_t len,
 	void *desc, uint64_t data, fi_addr_t dest_addr, void *context);
-ssize_t usdf_dgram_prefix_recv(struct fid_ep *ep, void *buf, size_t len, void *desc,
-	void *context);
+
+ssize_t usdf_dgram_prefix_recv(struct fid_ep *ep, void *buf, size_t len,
+	void *desc, void *context);
 ssize_t usdf_dgram_prefix_recvv(struct fid_ep *ep, const struct iovec *iov,
 	void **desc, size_t count, void *context);
-	
-
+ssize_t usdf_dgram_prefix_sendto(struct fid_ep *ep, const void *buf, size_t len,
+	void *desc, fi_addr_t dest_addr, void *context);
 
 #endif /* _USDF_DGRAM_H_ */

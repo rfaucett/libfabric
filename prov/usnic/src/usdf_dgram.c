@@ -59,6 +59,7 @@
 
 #include "usnic_direct.h"
 #include "usd.h"
+#include "usd_post.h"
 #include "usdf.h"
 
 ssize_t
@@ -279,4 +280,44 @@ usdf_dgram_prefix_recvv(struct fid_ep *fep, const struct iovec *iov,
 	}
 
 	return usd_post_recv(ep->ep_qp, &rxd);
+}
+
+ssize_t
+usdf_dgram_prefix_sendto(struct fid_ep *fep, const void *buf, size_t len,
+        void *desc, fi_addr_t dest_addr, void *context)
+{
+    struct usdf_ep *ep;
+    struct usd_dest *dest;
+    struct usd_qp_impl *qp;
+    struct usd_udp_hdr *hdr;
+    struct usd_wq *wq;
+    uint32_t last_post;
+    struct usd_wq_post_info *info;
+
+    ep = ep_ftou(fep);
+    dest = (struct usd_dest *)(uintptr_t)dest_addr;
+
+    qp = to_qpi(ep->ep_qp);
+    wq = &qp->uq_wq;
+
+    hdr = (struct usd_udp_hdr *) buf - 1;
+    memcpy(hdr, &dest->ds_dest.ds_udp.u_hdr, sizeof(*hdr));
+
+    /* adjust lengths and insert source port */
+    hdr->uh_ip.tot_len = htons(len + sizeof(struct usd_udp_hdr) -
+        sizeof(struct ether_header));
+    hdr->uh_udp.len = htons((sizeof(struct usd_udp_hdr) -
+        sizeof(struct ether_header) -
+        sizeof(struct iphdr)) + len);
+    hdr->uh_udp.source =
+        qp->uq_attrs.uqa_local_addr.ul_addr.ul_udp.u_addr.sin_port;
+
+    last_post = _usd_post_send_one(wq, hdr,
+            len + sizeof(struct usd_udp_hdr), 1);
+
+    info = &wq->uwq_post_info[last_post];
+    info->wp_context = context;
+    info->wp_len = len;
+
+    return 0;
 }
