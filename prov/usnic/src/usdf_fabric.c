@@ -98,6 +98,7 @@ usdf_validate_hints(struct fi_info *hints, struct usd_device_attrs *dap)
 		switch (hints->ep_attr->protocol) {
 		case FI_PROTO_UNSPEC:
 		case FI_PROTO_UDP:
+		case FI_PROTO_RUDP:
 			break;
 		default:
 			return -FI_ENODATA;
@@ -188,6 +189,8 @@ usdf_fill_info_dgram(
 	struct fi_info *fi;
 	struct fi_fabric_attr *fattrp;
 	struct fi_domain_attr *dattrp;
+	struct fi_tx_ctx_attr *txattr;
+	struct fi_rx_ctx_attr *rxattr;
 	struct fi_ep_attr *eattrp;
 	int ret;
 
@@ -227,6 +230,26 @@ usdf_fill_info_dgram(
 	if (fattrp->name == NULL) {
 		ret = -FI_ENOMEM;
 		goto fail;
+	}
+
+	/* TX attrs */
+	txattr = fi->tx_attr;
+	txattr->size = dap->uda_max_send_credits;
+	if (hints != NULL &&
+	    hints->tx_attr != NULL &&
+	    hints->tx_attr->size != 0 &&
+	    hints->tx_attr->size < txattr->size) {
+		txattr->size = hints->tx_attr->size;
+	}
+
+	/* RX attrs */
+	rxattr = fi->rx_attr;
+	rxattr->size = dap->uda_max_recv_credits;
+	if (hints != NULL &&
+	    hints->rx_attr != NULL &&
+	    hints->rx_attr->size != 0 &&
+	    hints->rx_attr->size < rxattr->size) {
+		rxattr->size = hints->rx_attr->size;
 	}
 
 	/* endpoint attrs */
@@ -275,6 +298,8 @@ usdf_fill_info_msg(
 	struct fi_info *fi;
 	struct fi_fabric_attr *fattrp;
 	struct fi_domain_attr *dattrp;
+	struct fi_tx_ctx_attr *txattr;
+	struct fi_rx_ctx_attr *rxattr;
 	struct fi_ep_attr *eattrp;
 	int ret;
 
@@ -316,11 +341,31 @@ usdf_fill_info_msg(
 		goto fail;
 	}
 
+	/* TX attrs */
+	txattr = fi->tx_attr;
+	txattr->size = dap->uda_max_send_credits;
+	if (hints != NULL &&
+	    hints->tx_attr != NULL &&
+	    hints->tx_attr->size != 0 &&
+	    hints->tx_attr->size < txattr->size) {
+		txattr->size = hints->tx_attr->size;
+	}
+
+	/* RX attrs */
+	rxattr = fi->rx_attr;
+	rxattr->size = dap->uda_max_recv_credits;
+	if (hints != NULL &&
+	    hints->rx_attr != NULL &&
+	    hints->rx_attr->size != 0 &&
+	    hints->rx_attr->size < rxattr->size) {
+		rxattr->size = hints->rx_attr->size;
+	}
+
 	/* endpoint attrs */
 	eattrp = fi->ep_attr;
 	eattrp->max_msg_size = dap->uda_mtu -
 		sizeof(struct usd_udp_hdr);
-	eattrp->protocol = FI_PROTO_UDP;
+	eattrp->protocol = FI_PROTO_RUDP;
 	eattrp->tx_ctx_cnt = 1;
 	eattrp->rx_ctx_cnt = 1;
 
@@ -453,23 +498,19 @@ next_dev:
 		usd_close(dev);
 		dev = NULL;
 	}
-	if (ai != NULL) {
-		freeaddrinfo(ai);
-	}
 
 	if (fi_first != NULL) {
 		*info = fi_first;
-		return 0;
+		ret = 0;
 	} else {
 		ret = -FI_ENODATA;
-		goto fail;
 	}
 
 fail:
 	if (dev != NULL) {
 		usd_close(dev);
 	}
-	if (fi_first != NULL) {
+	if (ret != 0 && fi_first != NULL) {
 		fi_freeinfo(fi_first);
 	}
 	if (ai != NULL) {
