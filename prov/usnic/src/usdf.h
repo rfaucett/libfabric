@@ -82,6 +82,7 @@ struct usdf_domain {
 	struct fid_domain   dom_fid;
 	struct usdf_fabric *dom_fabric;
 	atomic_t dom_refcnt;
+	struct usdf_eq *dom_eq;
 	struct usd_device   *dom_dev;
 	struct usd_device_attrs dom_dev_attrs;
 
@@ -94,6 +95,7 @@ struct usdf_domain {
 };
 #define dom_ftou(FDOM) container_of(FDOM, struct usdf_domain, dom_fid)
 #define dom_utof(DOM) (&(DOM)->dom_fid)
+#define dom_fidtou(FID) container_of(FID, struct usdf_domain, dom_fid.fid)
 
 struct usdf_pep {
 	struct fid_pep pep_fid;

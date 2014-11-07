@@ -53,12 +53,35 @@
 #include <rdma/fi_rma.h>
 #include <rdma/fi_errno.h>
 #include "fi.h"
+#include "fi_enosys.h"
 
 #include "usnic_direct.h"
 #include "usdf.h"
 
 static int
-usdf_close_domain(fid_t fid)
+usdf_domain_bind(struct fid *fid, struct fid *bfid, uint64_t flags)
+{
+        struct usdf_domain *udp;
+
+        udp = dom_fidtou(fid);
+
+        switch (bfid->fclass) {
+        case FI_CLASS_EQ:
+                if (udp->dom_eq != NULL) {
+                        return -FI_EINVAL;
+                }
+                udp->dom_eq = eq_fidtou(bfid);
+                atomic_inc(&udp->dom_eq->eq_refcnt);
+                break;
+        default:
+                return -FI_EINVAL;
+        }
+
+        return 0;
+}
+
+static int
+usdf_domain_close(fid_t fid)
 {
 	struct usdf_domain *udp;
 	void *rv;
@@ -81,6 +104,9 @@ usdf_close_domain(fid_t fid)
 		}
 	}
 
+	if (udp->dom_eq != NULL) {
+		atomic_dec(&udp->dom_eq->eq_refcnt);
+	}
 	atomic_dec(&udp->dom_fabric->fab_refcnt);
 	free(udp);
 
@@ -89,7 +115,10 @@ usdf_close_domain(fid_t fid)
 
 static struct fi_ops usdf_fid_ops = {
 	.size = sizeof(struct fi_ops),
-	.close = usdf_close_domain,
+	.close = usdf_domain_close,
+	.bind = usdf_domain_bind,
+	.sync = fi_no_sync,
+	.ops_open = fi_no_ops_open,
 };
 
 static struct fi_ops_mr usdf_domain_mr_ops = {
