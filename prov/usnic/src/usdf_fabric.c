@@ -86,10 +86,10 @@ usdf_validate_hints(struct fi_info *hints, struct usd_device_attrs *dap)
 	default:
 		return -FI_ENODATA;
 	}
-	if (hints->src_addr != NULL && hints->src_addrlen != size) {
+	if (hints->src_addr != NULL && hints->src_addrlen < size) {
 		return -FI_ENODATA;
 	}
-	if (hints->dest_addr != NULL && hints->dest_addrlen != size) {
+	if (hints->dest_addr != NULL && hints->dest_addrlen < size) {
 		return -FI_ENODATA;
 	}
 
@@ -455,7 +455,7 @@ usdf_getinfo(uint32_t version, const char *node, const char *service,
 		}
 
 		/* See if dest is reachable from this device */
-		if (dest != NULL) {
+		if (dest != NULL && dest->sin_addr.s_addr != INADDR_ANY) {
 			ret = usd_get_dest_distance(dev,
 					dest->sin_addr.s_addr, &metric);
 			if (ret != 0) {

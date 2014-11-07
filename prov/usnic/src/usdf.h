@@ -229,6 +229,7 @@ int usdf_endpoint_open(struct fid_domain *domain, struct fi_info *info,
 int usdf_av_open(struct fid_domain *domain, struct fi_av_attr *attr,
 		 struct fid_av **av_o, void *context);
 
+
 /* fi_ops_mr */
 int usdf_reg_mr(struct fid_domain *domain, const void *buf, size_t len,
 	uint64_t access, uint64_t offset, uint64_t requested_key,
