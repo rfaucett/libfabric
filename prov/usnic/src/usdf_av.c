@@ -63,6 +63,9 @@
 #include "usdf.h"
 #include "usd_queue.h"
 
+/* would like to move to include/rdma */
+#include "fi_usnic.h"
+
 static void
 usdf_av_insert_complete(struct usdf_av_insert *insert)
 {
@@ -351,6 +354,23 @@ usdf_av_close(struct fid *fid)
 	return 0;
 }
 
+static int
+usdf_am_get_distance(struct fid_av *fav, void *addr, int *metric_o)
+{
+	struct usdf_av *av;
+	struct usdf_domain *udp;
+	struct sockaddr_in *sin;
+	int ret;
+
+	av = av_ftou(fav);
+	udp = av->av_domain;
+	sin = addr;
+
+	ret = usd_get_dest_distance(udp->dom_dev,
+			sin->sin_addr.s_addr, metric_o);
+	return ret;
+}
+
 static struct fi_ops usdf_av_fi_ops = {
 	.size = sizeof(struct fi_ops),
 	.close = usdf_av_close,
@@ -360,20 +380,26 @@ static struct fi_ops usdf_av_fi_ops = {
 	.ops_open = fi_no_ops_open,
 };
 
-static struct fi_ops_av usdf_am_ops = {
-	.size = sizeof(struct fi_ops_av),
-	.insert = usdf_am_insert,
-	.remove = usdf_am_remove,
-	.lookup = usdf_am_lookup,
-	.straddr = usdf_av_straddr
+static struct fi_usnic_ops_av usdf_am_ops = {
+	.base_ops = {
+		.size = sizeof(struct fi_usnic_ops_av),
+		.insert = usdf_am_insert,
+		.remove = usdf_am_remove,
+		.lookup = usdf_am_lookup,
+		.straddr = usdf_av_straddr
+	},
+	.get_distance = usdf_am_get_distance,
 };
 
-static struct fi_ops_av usdf_am_ops_ro = {
-	.size = sizeof(struct fi_ops_av),
-	.insert = fi_no_av_insert,
-	.remove = fi_no_av_remove,
-	.lookup = usdf_am_lookup,
-	.straddr = usdf_av_straddr
+static struct fi_usnic_ops_av usdf_am_ops_ro = {
+	.base_ops = {
+		.size = sizeof(struct fi_usnic_ops_av),
+		.insert = fi_no_av_insert,
+		.remove = fi_no_av_remove,
+		.lookup = usdf_am_lookup,
+		.straddr = usdf_av_straddr
+	},
+	.get_distance = usdf_am_get_distance,
 };
 
 int
@@ -398,9 +424,9 @@ usdf_av_open(struct fid_domain *domain, struct fi_av_attr *attr,
 	}
 
 	if (attr->flags & FI_READ) {
-		av->av_fid.ops = &usdf_am_ops_ro;
+		av->av_fid.ops = (struct fi_ops_av *)&usdf_am_ops_ro;
 	} else {
-		av->av_fid.ops = &usdf_am_ops;
+		av->av_fid.ops = (struct fi_ops_av *)&usdf_am_ops;
 	}
 	av->av_fid.fid.fclass = FI_CLASS_AV;
 	av->av_fid.fid.context = context;
