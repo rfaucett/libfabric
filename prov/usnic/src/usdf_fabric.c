@@ -180,7 +180,45 @@ fail:
 	return ret;		// fi_freeinfo() in caller frees all
 }
 
+static struct fi_info *
+usdf_allocinfo(void)
+{
+	struct fi_info *fi;
+	struct fi_usnic_info *uip;
 
+	fi = fi_allocinfo_internal();
+	if (fi == NULL) {
+		goto fail;
+	}
+	uip = calloc(1, sizeof(*uip));
+	if (uip == NULL) {
+		goto fail;
+	}
+	fi->prov_info = uip;
+	fi->prov_info_len = sizeof(*uip);
+
+	return fi;
+
+fail:
+	if (fi != NULL) {
+		fi_freeinfo(fi);
+	}
+	return NULL;
+}
+
+static void
+usdf_fill_prov_info(struct fi_info *fi, struct usd_device_attrs *dap)
+{
+	struct fi_usnic_info *uip;
+
+	uip = fi->prov_info;
+
+	uip->ui_link_speed = dap->uda_bandwidth;
+	strcpy(uip->ui_ifname, dap->uda_ifname);
+	uip->ui_num_vf = dap->uda_num_vf;
+	uip->ui_qp_per_vf = dap->uda_qp_per_vf;
+	uip->ui_cq_per_vf = dap->uda_cq_per_vf;
+}
 
 static int
 usdf_fill_info_dgram(
@@ -197,7 +235,6 @@ usdf_fill_info_dgram(
 	struct fi_tx_ctx_attr *txattr;
 	struct fi_rx_ctx_attr *rxattr;
 	struct fi_ep_attr *eattrp;
-	struct fi_usnic_info *uip;
 	int ret;
 
 	/* check that we are capable of what's requested */
@@ -210,18 +247,11 @@ usdf_fill_info_dgram(
 		return -FI_ENODATA;
 	}
 
-	fi = fi_allocinfo_internal();
+	fi = usdf_allocinfo();
 	if (fi == NULL) {
 		ret = -FI_ENOMEM;
 		goto fail;
 	}
-	uip = calloc(1, sizeof(*uip));
-	if (uip == NULL) {
-		ret = -FI_ENOMEM;
-		goto fail;
-	}
-	fi->prov_info = uip;
-	fi->prov_info_len = sizeof(*uip);
 
 	fi->caps = USDF_DGRAM_CAPS;
 
@@ -231,12 +261,6 @@ usdf_fill_info_dgram(
 		fi->mode = USDF_DGRAM_SUPP_MODE;
 	}
 	fi->ep_type = FI_EP_DGRAM;
-
-	uip->ui_link_speed = dap->uda_bandwidth;
-	strcpy(uip->ui_ifname, dap->uda_ifname);
-	uip->ui_num_vf = dap->uda_num_vf;
-	uip->ui_qp_per_vf = dap->uda_qp_per_vf;
-	uip->ui_cq_per_vf = dap->uda_cq_per_vf;
 
 	ret = usdf_fill_addr_info(fi, hints, src, dest, dap);
 	if (ret != 0) {
@@ -288,6 +312,9 @@ usdf_fill_info_dgram(
 	dattrp->control_progress = FI_PROGRESS_AUTO;
 	dattrp->data_progress = FI_PROGRESS_AUTO;
 
+	/* provider attrs */
+	usdf_fill_prov_info(fi, dap);
+
 	/* add to tail of list */
 	if (*fi_first == NULL) {
 		*fi_first = fi;
@@ -320,7 +347,6 @@ usdf_fill_info_msg(
 	struct fi_tx_ctx_attr *txattr;
 	struct fi_rx_ctx_attr *rxattr;
 	struct fi_ep_attr *eattrp;
-	struct fi_usnic_info *uip;
 	int ret;
 
 	/* check that we are capable of what's requested */
@@ -333,7 +359,7 @@ usdf_fill_info_msg(
 		return -FI_ENODATA;
 	}
 
-	fi = fi_allocinfo_internal();
+	fi = usdf_allocinfo();
 	if (fi == NULL) {
 		ret = -FI_ENOMEM;
 		goto fail;
@@ -347,13 +373,6 @@ usdf_fill_info_msg(
 		fi->mode = USDF_MSG_SUPP_MODE;
 	}
 	fi->ep_type = FI_EP_MSG;
-
-	uip = fi->prov_info;
-	uip->ui_link_speed = dap->uda_bandwidth;
-	strcpy(uip->ui_ifname, dap->uda_ifname);
-	uip->ui_num_vf = dap->uda_num_vf;
-	uip->ui_qp_per_vf = dap->uda_qp_per_vf;
-	uip->ui_cq_per_vf = dap->uda_cq_per_vf;
 
 
 	ret = usdf_fill_addr_info(fi, hints, src, dest, dap);
@@ -402,6 +421,9 @@ usdf_fill_info_msg(
 	dattrp->threading = FI_THREAD_UNSPEC;
 	dattrp->control_progress = FI_PROGRESS_AUTO;
 	dattrp->data_progress = FI_PROGRESS_AUTO;
+
+	/* provider attrs */
+	usdf_fill_prov_info(fi, dap);
 
 	/* add to tail of list */
 	if (*fi_first == NULL) {

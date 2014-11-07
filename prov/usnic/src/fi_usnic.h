@@ -36,6 +36,8 @@
 #include <stdint.h>
 #include <net/if.h>
 
+#define FI_PROTO_RUDP 100
+
 /*
  * usNIC specific info
  */

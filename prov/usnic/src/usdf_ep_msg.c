@@ -195,7 +195,7 @@ static struct fi_ops_msg usdf_msg_ops = {
 };
 
 int
-usdf_endpoint_open_msg(struct fid_domain *domain, struct fi_info *info,
+usdf_ep_msg_open(struct fid_domain *domain, struct fi_info *info,
 	    struct fid_ep **ep_o, void *context)
 {
 	struct usdf_domain *udp;
