@@ -61,6 +61,9 @@
 
 #include "usnic_direct.h"
 #include "usdf.h"
+#ifdef OMPI_SFI
+#include "fi_usnic.h"
+#endif
 
 static int
 usdf_freeinfo(struct fi_info *info)
@@ -92,7 +95,6 @@ usdf_validate_hints(struct fi_info *hints, struct usd_device_attrs *dap)
 	if (hints->dest_addr != NULL && hints->dest_addrlen < size) {
 		return -FI_ENODATA;
 	}
-
 
 	if (hints->ep_attr != NULL) {
 		switch (hints->ep_attr->protocol) {
@@ -169,6 +171,14 @@ usdf_fill_addr_info(struct fi_info *fi, struct fi_info *hints,
 		break;
 	}
 
+#ifdef OMPI_SFI
+	{
+		struct fi_usnic_info *uip;
+		uip = fi->prov_info;
+		uip->ui_netmask_be = dap->uda_netmask_be;
+	}
+#endif
+
 	return 0;
 
 fail:
@@ -218,6 +228,17 @@ usdf_fill_info_dgram(
 		fi->mode = USDF_DGRAM_SUPP_MODE;
 	}
 	fi->ep_type = FI_EP_DGRAM;
+#ifdef OMPI_SFI
+	{
+		struct fi_usnic_info *uip;
+		uip = fi->prov_info;
+		uip->ui_link_speed = dap->uda_bandwidth;
+		strcpy(uip->ui_ifname, dap->uda_ifname);
+		uip->ui_num_vf = dap->uda_num_vf;
+		uip->ui_qp_per_vf = dap->uda_qp_per_vf;
+		uip->ui_cq_per_vf = dap->uda_cq_per_vf;
+	}
+#endif
 
 	ret = usdf_fill_addr_info(fi, hints, src, dest, dap);
 	if (ret != 0) {
