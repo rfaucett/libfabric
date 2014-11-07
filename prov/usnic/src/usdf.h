@@ -42,10 +42,16 @@
 #define USDF_FI_NAME "usnic"
 #define USDF_HDR_BUF_ENTRY 64
 #define USDF_EP_CAP_PIO (1ULL << 63)
-#define USDF_CAPS (FI_MSG | FI_SOURCE | FI_SEND | FI_RECV)
 
-#define USDF_SUPP_MODE (FI_LOCAL_MR | FI_MSG_PREFIX)
-#define USDF_REQ_MODE (FI_LOCAL_MR)
+#define USDF_DGRAM_CAPS (FI_MSG | FI_SOURCE | FI_SEND | FI_RECV)
+
+#define USDF_DGRAM_SUPP_MODE (FI_LOCAL_MR | FI_MSG_PREFIX)
+#define USDF_DGRAM_REQ_MODE (FI_LOCAL_MR)
+
+#define USDF_MSG_CAPS (FI_MSG | FI_SOURCE | FI_SEND | FI_RECV)
+
+#define USDF_MSG_SUPP_MODE (FI_LOCAL_MR)
+#define USDF_MSG_REQ_MODE (FI_LOCAL_MR)
 
 /* usdf event flags */
 #define USDF_EVENT_FLAG_ERROR (1ULL << 62)
@@ -76,6 +82,18 @@ struct usdf_domain {
 };
 #define dom_ftou(FDOM) container_of(FDOM, struct usdf_domain, dom_fid)
 #define dom_utof(DOM) (&(DOM)->dom_fid)
+
+struct usdf_pep {
+	struct fid_pep pep_fid;
+	atomic_t pep_refcnt;
+	struct usdf_fabric *pep_fabric;
+	struct usdf_eq *pep_eq;
+	int pep_sock;
+	int pep_backlog;
+};
+#define pep_ftou(FPEP) container_of(FPEP, struct usdf_pep, pep_fid)
+#define pep_fidtou(FID) container_of(FID, struct usdf_pep, pep_fid.fid)
+#define pep_utof(PEP) (&(PEP)->pep_fid)
 
 struct usdf_ep {
 	struct fid_ep ep_fid;
@@ -197,6 +215,8 @@ int usdf_domain_open(struct fid_fabric *fabric, struct fi_info *info,
 	struct fid_domain **domain, void *context);
 int usdf_eq_open(struct fid_fabric *fabric, struct fi_eq_attr *attr,
 	struct fid_eq **eq, void *context);
+int usdf_passive_ep_open(struct fid_fabric *fabric, struct fi_info *info,
+		struct fid_pep **pep_p, void *context);
 
 /* fi_ops_domain */
 int usdf_cq_open();

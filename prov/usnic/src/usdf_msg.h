@@ -33,52 +33,35 @@
  * ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
  * POSSIBILITY OF SUCH DAMAGE.
  */
+#ifndef _USDF_MSG_RC_H_
+#define _USDF_MSG_RC_H_
 
-#if HAVE_CONFIG_H
-#  include <config.h>
-#endif /* HAVE_CONFIG_H */
+/* fi_ops_cm for RC */
+int usdf_cm_rc_connect(struct fid_ep *ep, const void *addr,
+	const void *param, size_t paramlen);
+int usdf_cm_rc_shutdown(struct fid_ep *ep, uint64_t flags);
 
-#include <asm/types.h>
-#include <assert.h>
-#include <errno.h>
-#include <fcntl.h>
-#include <netinet/in.h>
-#include <poll.h>
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
+/* fi_ops_msg for RC */
+ssize_t usdf_msg_recv(struct fid_ep *ep, void *buf, size_t len, void *desc,
+	void *context);
+ssize_t usdf_msg_recvv(struct fid_ep *ep, const struct iovec *iov,
+	void **desc, size_t count, void *context);
+ssize_t usdf_msg_recvfrom(struct fid_ep *ep, void *buf, size_t len,
+	void *desc, fi_addr_t src_addr, void *context);
+ssize_t usdf_msg_recvmsg(struct fid_ep *ep, const struct fi_msg *msg,
+	uint64_t flags);
 
-#include <rdma/fabric.h>
-#include <rdma/fi_cm.h>
-#include <rdma/fi_domain.h>
-#include <rdma/fi_prov.h>
-#include <rdma/fi_endpoint.h>
-#include <rdma/fi_rma.h>
-#include <rdma/fi_errno.h>
-#include "fi.h"
+ssize_t usdf_msg_send(struct fid_ep *ep, const void *buf, size_t len,
+	void *desc, void *context);
+ssize_t usdf_msg_sendv(struct fid_ep *ep, const struct iovec *iov,
+	void **desc, size_t count, void *context);
+ssize_t usdf_msg_sendmsg(struct fid_ep *ep, const struct fi_msg *msg,
+	uint64_t flags);
+ssize_t usdf_msg_senddata(struct fid_ep *ep, const void *buf, size_t len,
+	void *desc, uint64_t data, void *context);
 
-#include "usnic_direct.h"
-#include "usdf.h"
+ssize_t usdf_msg_inject(struct fid_ep *ep, const void *buf, size_t len);
+	
 
-int
-usdf_cm_dgram_connect(struct fid_ep *fep, const void *addr,
-		const void *param, size_t paramlen)
-{
-	struct usdf_ep *ep;
-	const struct sockaddr_in *sin;
-	int ret;
 
-	ep = ep_ftou(fep);
-	sin = addr;
-
-	ret = usd_create_dest(ep->ep_domain->dom_dev, sin->sin_addr.s_addr,
-			sin->sin_port, &ep->ep_dest);
-
-	return ret;
-}
-
-int
-usdf_cm_dgram_shutdown(struct fid_ep *ep, uint64_t flags)
-{
-	return -FI_ENOSYS;
-}
+#endif /* _USDF_MSG_RC_H_ */

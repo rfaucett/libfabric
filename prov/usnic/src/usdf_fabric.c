@@ -75,24 +75,6 @@ usdf_validate_hint_caps(struct fi_info *hints, struct usd_device_attrs *dap)
 	struct fi_fabric_attr *fattrp;
 	struct sockaddr_in *sin;
 
-	switch (hints->ep_type) {
-	case FI_EP_UNSPEC:
-	case FI_EP_DGRAM:
-		break;
-	default:
-		return -FI_ENODATA;
-	}
-
-	/* check that we are capable of what's requested */
-	if ((hints->caps & ~USDF_CAPS) != 0) {
-		return -FI_ENODATA;
-	}
-
-	/* app must support these modes */
-	if ((hints->mode & USDF_REQ_MODE) != USDF_REQ_MODE) {
-		return -FI_ENODATA;
-	}
-
 	switch (hints->addr_format) {
 	case FI_ADDR_UNSPEC:
 	case FI_SOCKADDR_IN:
@@ -177,20 +159,37 @@ fail:
 
 
 static int
-usdf_fill_info_dgram(struct fi_info *fi, struct fi_info *hints,
-		struct usd_device_attrs *dap)
+usdf_fill_info_dgram(struct fi_info *hints, struct usd_device_attrs *dap,
+	struct fi_info **fi_first, struct fi_info **fi_last)
 {
+	struct fi_info *fi;
 	struct fi_fabric_attr *fattrp;
 	struct fi_domain_attr *dattrp;
 	struct fi_ep_attr *eattrp;
 	int ret;
 
-	fi->caps = USDF_CAPS;
+	/* check that we are capable of what's requested */
+	if ((hints->caps & ~USDF_DGRAM_CAPS) != 0) {
+		return -FI_ENODATA;
+	}
+
+	/* app must support these modes */
+	if ((hints->mode & USDF_DGRAM_REQ_MODE) != USDF_DGRAM_REQ_MODE) {
+		return -FI_ENODATA;
+	}
+
+	fi = fi_allocinfo_internal();
+	if (fi == NULL) {
+		ret = -FI_ENOMEM;
+		goto fail;
+	}
+
+	fi->caps = USDF_DGRAM_CAPS;
 
 	if (hints != NULL) {
-		fi->mode = hints->mode & USDF_SUPP_MODE;
+		fi->mode = hints->mode & USDF_DGRAM_SUPP_MODE;
 	} else {
-		fi->mode = USDF_SUPP_MODE;
+		fi->mode = USDF_DGRAM_SUPP_MODE;
 	}
 	fi->ep_type = FI_EP_DGRAM;
 
@@ -221,13 +220,103 @@ usdf_fill_info_dgram(struct fi_info *fi, struct fi_info *hints,
 	/* domain attrs */
 	dattrp = fi->domain_attr;
 	dattrp->threading = FI_THREAD_UNSPEC;
-	dattrp->control_progress = FI_PROGRESS_MANUAL;
+	dattrp->control_progress = FI_PROGRESS_AUTO;
 	dattrp->data_progress = FI_PROGRESS_AUTO;
+
+	/* add to tail of list */
+	if (*fi_first == NULL) {
+		*fi_first = fi;
+	} else {
+		(*fi_last)->next = fi;
+	}
+	*fi_last = fi;
 
 	return 0;
 
 fail:
-	return ret;		// fi_freeinfo() in caller frees all
+	if (fi != NULL) {
+		fi_freeinfo(fi);
+	}
+	return ret;
+}
+
+static int
+usdf_fill_info_msg(struct fi_info *hints, struct usd_device_attrs *dap,
+	struct fi_info **fi_first, struct fi_info **fi_last)
+{
+	struct fi_info *fi;
+	struct fi_fabric_attr *fattrp;
+	struct fi_domain_attr *dattrp;
+	struct fi_ep_attr *eattrp;
+	int ret;
+
+	/* check that we are capable of what's requested */
+	if ((hints->caps & ~USDF_MSG_CAPS) != 0) {
+		return -FI_ENODATA;
+	}
+
+	/* app must support these modes */
+	if ((hints->mode & USDF_MSG_REQ_MODE) != USDF_MSG_REQ_MODE) {
+		return -FI_ENODATA;
+	}
+
+	fi = fi_allocinfo_internal();
+	if (fi == NULL) {
+		ret = -FI_ENOMEM;
+		goto fail;
+	}
+
+	fi->caps = USDF_MSG_CAPS;
+
+	if (hints != NULL) {
+		fi->mode = hints->mode & USDF_MSG_SUPP_MODE;
+	} else {
+		fi->mode = USDF_MSG_SUPP_MODE;
+	}
+	fi->ep_type = FI_EP_MSG;
+
+	ret = usdf_fill_addr_info(fi, hints, dap);
+	if (ret != 0) {
+		goto fail;
+	}
+
+	/* fabric attrs */
+	fattrp = fi->fabric_attr;
+	fattrp->name = strdup(dap->uda_devname);
+	if (fattrp->name == NULL) {
+		ret = -FI_ENOMEM;
+		goto fail;
+	}
+
+	/* endpoint attrs */
+	eattrp = fi->ep_attr;
+	eattrp->max_msg_size = dap->uda_mtu -
+		sizeof(struct usd_udp_hdr);
+	eattrp->protocol = FI_PROTO_UDP;
+	eattrp->tx_ctx_cnt = 1;
+	eattrp->rx_ctx_cnt = 1;
+
+	/* domain attrs */
+	dattrp = fi->domain_attr;
+	dattrp->threading = FI_THREAD_UNSPEC;
+	dattrp->control_progress = FI_PROGRESS_AUTO;
+	dattrp->data_progress = FI_PROGRESS_AUTO;
+
+	/* add to tail of list */
+	if (*fi_first == NULL) {
+		*fi_first = fi;
+	} else {
+		(*fi_last)->next = fi;
+	}
+	*fi_last = fi;
+
+	return 0;
+
+fail:
+	if (fi != NULL) {
+		fi_freeinfo(fi);
+	}
+	return ret;
 }
 
 static int
@@ -237,11 +326,11 @@ usdf_getinfo(uint32_t version, const char *node, const char *service,
 	struct usd_device_entry devs[USD_MAX_DEVICES];
 	struct fi_info *fi_first;
 	struct fi_info *fi_last;
-	struct fi_info *fi;
 	struct usd_device *dev;
 	struct usd_device_attrs dattr;
 	struct addrinfo *ai;
 	struct sockaddr_in *sin;
+	enum fi_ep_type ep_type;
 	int metric;
 	int num_devs;
 	int i;
@@ -296,27 +385,27 @@ usdf_getinfo(uint32_t version, const char *node, const char *service,
 			if (ret != 0) {
 				goto next_dev;
 			}
-		}
 
-		fi = fi_allocinfo_internal();
-		if (fi == NULL) {
-			ret = -FI_ENOMEM;
-			goto fail;
-		}
-
-		/* Fill info stuct to return */
-		ret = usdf_fill_info_dgram(fi, hints, &dattr);
-		if (ret != 0) {
-			goto fail;
-		}
-
-		/* add to tail of list */
-		if (fi_first == NULL) {
-			fi_first = fi;
+			ep_type = hints->ep_type;
 		} else {
-			fi_last->next = fi;
+			ep_type = FI_EP_UNSPEC;
 		}
-		fi_last = fi;
+
+		if (ep_type == FI_EP_DGRAM || ep_type == FI_EP_UNSPEC) {
+			ret = usdf_fill_info_dgram(hints, &dattr,
+					&fi_first, &fi_last);
+			if (ret != 0 && ret != -FI_ENODATA) {
+				goto fail;
+			}
+		}
+
+		if (ep_type == FI_EP_MSG || ep_type == FI_EP_UNSPEC) {
+			ret = usdf_fill_info_msg(hints, &dattr,
+					&fi_first, &fi_last);
+			if (ret != 0 && ret != -FI_ENODATA) {
+				goto fail;
+			}
+		}
 
 next_dev:
 		usd_close(dev);
@@ -369,6 +458,7 @@ static struct fi_ops usdf_fi_ops = {
 static struct fi_ops_fabric usdf_ops_fabric = {
 	.size = sizeof(struct fi_ops_fabric),
 	.domain = usdf_domain_open,
+	.endpoint = usdf_passive_ep_open,
 	.eq_open = usdf_eq_open,
 };
 

@@ -151,6 +151,7 @@ _usnic_files = \
 	prov/usnic/src/usdf_av.c \
 	prov/usnic/src/usdf_endpoint.c \
 	prov/usnic/src/usdf_msg.c \
+	prov/usnic/src/usdf_dgram.c \
 	prov/usnic/src/usdf_progress.c \
 	prov/usnic/src/usdf_cm.c
 
