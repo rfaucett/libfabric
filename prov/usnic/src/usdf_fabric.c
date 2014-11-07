@@ -62,6 +62,9 @@
 #include "usnic_direct.h"
 #include "usdf.h"
 #include "fi_usnic.h"
+#include "libnl_utils.h"
+
+struct usdf_usnic_info *__usdf_devinfo;
 
 static int
 usdf_freeinfo(struct fi_info *info)
@@ -201,7 +204,7 @@ usdf_allocinfo(void)
 
 fail:
 	if (fi != NULL) {
-		fi_freeinfo(fi);
+		fi_freeinfo_internal(fi);
 	}
 	return NULL;
 }
@@ -327,7 +330,7 @@ usdf_fill_info_dgram(
 
 fail:
 	if (fi != NULL) {
-		fi_freeinfo(fi);
+		fi_freeinfo_internal(fi);
 	}
 	return ret;
 }
@@ -437,27 +440,92 @@ usdf_fill_info_msg(
 
 fail:
 	if (fi != NULL) {
-		fi_freeinfo(fi);
+		fi_freeinfo_internal(fi);
 	}
 	return ret;
+}
+
+static int
+usdf_get_devinfo()
+{
+	struct usdf_usnic_info *dp;
+	struct usdf_dev_entry *dep;
+	int ret;
+	int d;
+
+	dp = calloc(1, sizeof(*dp));
+	if (dp == NULL) {
+		ret = -FI_ENOMEM;
+		goto fail;
+	}
+	__usdf_devinfo = dp;
+
+	dp->uu_num_devs = USD_MAX_DEVICES;
+	ret = usd_get_device_list(dp->uu_devs, &dp->uu_num_devs);
+	if (ret != 0) {
+		dp->uu_num_devs = 0;
+		goto fail;
+	}
+
+	for (d = 0; d < dp->uu_num_devs; ++d) {
+		dep = &dp->uu_info[d];
+
+		ret = usd_open(dp->uu_devs[d].ude_devname, &dep->ue_dev);
+		if (ret != 0) {
+			continue;
+		}
+
+		ret = usd_get_device_attrs(dep->ue_dev, &dep->ue_dattr);
+		if (ret != 0) {
+			continue;
+		}
+
+		dep->ue_dev_ok = 1;	/* this device is OK */
+	}
+	return 0;
+
+fail:
+	return ret;
+}
+
+int
+usdf_get_distance(
+    struct usd_device_attrs *dap,
+    uint32_t daddr_be,
+    int *metric_o)
+{
+    uint32_t nh_ip_addr;
+    int ret;
+
+    ret = usnic_nl_rt_lookup(dap->uda_ipaddr_be, daddr_be,
+            dap->uda_ifindex, &nh_ip_addr);
+    if (ret != 0) {
+        *metric_o = -1;
+        ret = 0;
+    } else if (nh_ip_addr == 0) {
+        *metric_o = 0;
+    } else {
+        *metric_o = 1;
+    }
+
+    return ret;
 }
 
 static int
 usdf_getinfo(uint32_t version, const char *node, const char *service,
 	       uint64_t flags, struct fi_info *hints, struct fi_info **info)
 {
-	struct usd_device_entry devs[USD_MAX_DEVICES];
+	struct usdf_usnic_info *dp;
+	struct usdf_dev_entry *dep;
+	struct usd_device_attrs *dap;
 	struct fi_info *fi_first;
 	struct fi_info *fi_last;
-	struct usd_device *dev;
-	struct usd_device_attrs dattr;
 	struct addrinfo *ai;
 	struct sockaddr_in *src;
 	struct sockaddr_in *dest;
 	enum fi_ep_type ep_type;
 	int metric;
-	int num_devs;
-	int i;
+	int d;
 	int ret;
 
 	fi_first = NULL;
@@ -465,7 +533,17 @@ usdf_getinfo(uint32_t version, const char *node, const char *service,
 	ai = NULL;
 	src = NULL;
 	dest = NULL;
-	dev = NULL;
+
+	/*
+	 * Get and cache usNIC device info
+	 */
+	if (__usdf_devinfo == NULL) {
+		ret = usdf_get_devinfo();
+		if (ret != 0) {
+			goto fail;
+		}
+	}
+	dp = __usdf_devinfo;
 
 	if (node != NULL || service != NULL) {
 		ret = getaddrinfo(node, service, NULL, &ai);
@@ -487,40 +565,32 @@ usdf_getinfo(uint32_t version, const char *node, const char *service,
 		}
 	}
 
-	num_devs = USD_MAX_DEVICES;
-	ret = usd_get_device_list(devs, &num_devs);
-	if (ret != 0) {
-		goto fail;
-	}
+	for (d = 0; d < dp->uu_num_devs; ++d) {
+		dep = &dp->uu_info[d];
+		dap = &dep->ue_dattr;
 
-	for (i = 0; i < num_devs; ++i) {
-		ret = usd_open(devs[i].ude_devname, &dev);
-		if (ret != 0) {
+		/* skip this device if it has some problem */
+		if (!dep->ue_dev_ok) {
 			continue;
-		}
-
-		ret = usd_get_device_attrs(dev, &dattr);
-		if (ret != 0) {
-			goto next_dev;
 		}
 
 		/* See if dest is reachable from this device */
 		if (dest != NULL && dest->sin_addr.s_addr != INADDR_ANY) {
-			ret = usd_get_dest_distance(dev,
+			ret = usdf_get_distance(dap,
 					dest->sin_addr.s_addr, &metric);
 			if (ret != 0) {
 				goto fail;
 			}
 			if (metric == -1) {
-				goto next_dev;
+				continue;
 			}
 		}
 
 		/* Does this device match requested attributes? */
 		if (hints != NULL) {
-			ret = usdf_validate_hints(hints, &dattr);
+			ret = usdf_validate_hints(hints, dap);
 			if (ret != 0) {
-				goto next_dev;
+				continue;
 			}
 
 			ep_type = hints->ep_type;
@@ -529,7 +599,7 @@ usdf_getinfo(uint32_t version, const char *node, const char *service,
 		}
 
 		if (ep_type == FI_EP_DGRAM || ep_type == FI_EP_UNSPEC) {
-			ret = usdf_fill_info_dgram(hints, src, dest, &dattr,
+			ret = usdf_fill_info_dgram(hints, src, dest, dap,
 					&fi_first, &fi_last);
 			if (ret != 0 && ret != -FI_ENODATA) {
 				goto fail;
@@ -537,16 +607,12 @@ usdf_getinfo(uint32_t version, const char *node, const char *service,
 		}
 
 		if (ep_type == FI_EP_MSG || ep_type == FI_EP_UNSPEC) {
-			ret = usdf_fill_info_msg(hints, src, dest, &dattr,
+			ret = usdf_fill_info_msg(hints, src, dest, dap,
 					&fi_first, &fi_last);
 			if (ret != 0 && ret != -FI_ENODATA) {
 				goto fail;
 			}
 		}
-
-next_dev:
-		usd_close(dev);
-		dev = NULL;
 	}
 
 	if (fi_first != NULL) {
@@ -557,11 +623,8 @@ next_dev:
 	}
 
 fail:
-	if (dev != NULL) {
-		usd_close(dev);
-	}
 	if (ret != 0 && fi_first != NULL) {
-		fi_freeinfo(fi_first);
+		fi_freeinfo_internal(fi_first);
 	}
 	if (ai != NULL) {
 		freeaddrinfo(ai);

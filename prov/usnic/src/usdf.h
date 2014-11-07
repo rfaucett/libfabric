@@ -57,6 +57,18 @@
 #define USDF_EVENT_FLAG_ERROR (1ULL << 62)
 #define USDF_EVENT_FLAG_FREE_BUF (1ULL << 63)
 
+struct usdf_dev_entry {
+	struct usd_device *ue_dev;
+	struct usd_device_attrs ue_dattr;
+	int ue_dev_ok;
+};
+struct usdf_usnic_info {
+	int uu_num_devs;
+	struct usd_device_entry uu_devs[USD_MAX_DEVICES];
+	struct usdf_dev_entry uu_info[USD_MAX_DEVICES];
+};
+extern struct usdf_usnic_info *__usdf_devinfo;
+
 struct usdf_fabric {
 	struct fid_fabric   fab_fid;
 	char *fab_name;

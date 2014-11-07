@@ -110,6 +110,9 @@ usdf_domain_open(struct fid_fabric *fabric, struct fi_info *info,
 {
 	struct usdf_fabric *fab;
 	struct usdf_domain *udp;
+	struct usdf_usnic_info *dp;
+	struct usdf_dev_entry *dep;
+	int d;
 	int ret;
 
 	udp = calloc(1, sizeof *udp);
@@ -120,9 +123,24 @@ usdf_domain_open(struct fid_fabric *fabric, struct fi_info *info,
 	udp->dom_eventfd = -1;
 
 	fab = fab_fidtou(fabric);
-	ret = usd_open(fab->fab_name, &udp->dom_dev);
-	if (ret != 0) {
-		goto fail;
+
+	/* steal cached device from info if we can */
+	dp = __usdf_devinfo;
+	for (d = 0; d < dp->uu_num_devs; ++d) {
+		dep = &dp->uu_info[d];
+		if (dep->ue_dev != NULL &&
+		    strcmp(fab->fab_name, dep->ue_dattr.uda_devname) == 0) {
+			udp->dom_dev = dep->ue_dev;
+			dep->ue_dev = NULL;
+			break;
+		}
+	}
+
+	if (udp->dom_dev == NULL) {
+		ret = usd_open(fab->fab_name, &udp->dom_dev);
+		if (ret != 0) {
+			goto fail;
+		}
 	}
 
 	udp->dom_fid.fid.fclass = FI_CLASS_DOMAIN;
