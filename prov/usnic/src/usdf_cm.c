@@ -82,3 +82,35 @@ usdf_cm_dgram_shutdown(struct fid_ep *ep, uint64_t flags)
 {
 	return -FI_ENOSYS;
 }
+
+int
+usdf_cm_msg_connect(struct fid_ep *fep, const void *addr,
+		const void *param, size_t paramlen)
+{
+	struct usdf_ep *ep;
+	const struct sockaddr_in *sin;
+	int ret;
+	int s;
+
+	ep = ep_ftou(fep);
+	sin = addr;
+
+	s = socket(AF_INET, SOCK_STREAM, 0);
+	if (s == -1) {
+		ret = -errno;
+	}
+
+	ret = connect(s, (struct sockaddr *)sin, sizeof(*sin));
+	if (ret != 0) {
+		ret = -errno;
+	}
+	(void)ep;
+
+	return ret;
+}
+
+int
+usdf_cm_msg_shutdown(struct fid_ep *ep, uint64_t flags)
+{
+	return -FI_ENOSYS;
+}

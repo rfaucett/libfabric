@@ -207,7 +207,13 @@ usdf_ep_bind(struct fid *fid, struct fid *bfid, uint64_t flags)
 		break;
 
 	case FI_CLASS_EQ:
-		// XXX
+printf("bind EQ to ep!\n");
+		if (ep->ep_eq != NULL) {
+			return -FI_EINVAL;
+		}
+		ep->ep_eq = eq_fidtou(bfid);
+		atomic_inc(&ep->ep_eq->eq_refcnt);
+		break;
 	default:
 		return -FI_EINVAL;
 	}
@@ -230,6 +236,9 @@ usdf_ep_close(fid_t fid)
 		usd_destroy_qp(ep->ep_qp);
 	}
 	atomic_dec(&ep->ep_domain->dom_refcnt);
+	if (&ep->ep_eq != NULL) {
+		atomic_dec(&ep->ep_eq->eq_refcnt);
+	}
 	
 	free(ep);
 	return 0;
@@ -286,8 +295,8 @@ static struct fi_ops_msg usdf_dgram_prefix_ops = {
 
 static struct fi_ops_cm usdf_cm_dgram_ops = {
 	.size = sizeof(struct fi_ops_cm),
-	.connect = usdf_cm_dgram_connect,
-	.shutdown = usdf_cm_dgram_shutdown,
+	.connect = usdf_cm_msg_connect,
+	.shutdown = usdf_cm_msg_shutdown,
 };
 
 static int
@@ -438,8 +447,9 @@ usdf_passive_ep_close(fid_t fid)
 		return -FI_EBUSY;
 	}
 
-	if (pep->pep_sock != -1) {
-		close(pep->pep_sock);
+	close(pep->pep_sock);
+	if (&pep->pep_eq != NULL) {
+		atomic_dec(&pep->pep_eq->eq_refcnt);
 	}
 	atomic_dec(&pep->pep_fabric->fab_refcnt);
 	free(pep);
@@ -462,6 +472,7 @@ printf("bind EQ!\n");
 			return -FI_EINVAL;
 		}
 		pep->pep_eq = eq_fidtou(bfid);
+		atomic_inc(&pep->pep_eq->eq_refcnt);
 		break;
 		
 	default:

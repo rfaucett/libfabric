@@ -105,6 +105,7 @@ struct usdf_ep {
 	struct usdf_av *ep_av;
 	struct usdf_cq *ep_wcq;
 	struct usdf_cq *ep_rcq;
+	struct usdf_eq *ep_eq;
 	struct usd_qp *ep_qp;
 	struct usd_dest *ep_dest;
 	struct usd_qp_attrs ep_qp_attrs;
