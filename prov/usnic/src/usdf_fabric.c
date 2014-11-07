@@ -70,29 +70,29 @@ usdf_freeinfo(struct fi_info *info)
 }
 
 static int
-usdf_validate_hint_caps(struct fi_info *hints, struct usd_device_attrs *dap)
+usdf_validate_hints(struct fi_info *hints, struct usd_device_attrs *dap)
 {
 	struct fi_fabric_attr *fattrp;
-	struct sockaddr_in *sin;
+	size_t size;
 
 	switch (hints->addr_format) {
 	case FI_ADDR_UNSPEC:
 	case FI_SOCKADDR_IN:
+		size = sizeof(struct sockaddr_in);
+		break;
 	case FI_SOCKADDR:
+		size = sizeof(struct sockaddr);
 		break;
 	default:
 		return -FI_ENODATA;
 	}
-	sin = hints->src_addr;
-	if (sin != NULL) {
-		if (hints->src_addrlen < sizeof(*sin)) {
-			return -FI_ENODATA;
-		}
-		if (sin->sin_addr.s_addr != INADDR_ANY &&
-			sin->sin_addr.s_addr != dap->uda_ipaddr_be) {
-			return -FI_ENODATA;
-		}
+	if (hints->src_addr != NULL && hints->src_addrlen != size) {
+		return -FI_ENODATA;
 	}
+	if (hints->dest_addr != NULL && hints->dest_addrlen != size) {
+		return -FI_ENODATA;
+	}
+
 
 	if (hints->ep_attr != NULL) {
 		switch (hints->ep_attr->protocol) {
@@ -121,6 +121,7 @@ usdf_validate_hint_caps(struct fi_info *hints, struct usd_device_attrs *dap)
 
 static int
 usdf_fill_addr_info(struct fi_info *fi, struct fi_info *hints,
+		struct sockaddr_in *src, struct sockaddr_in *dest,
 		struct usd_device_attrs *dap)
 {
 	struct sockaddr_in *sin;
@@ -136,6 +137,12 @@ usdf_fill_addr_info(struct fi_info *fi, struct fi_info *hints,
 	switch (fi->addr_format) {
 	case FI_SOCKADDR:
 	case FI_SOCKADDR_IN:
+		if (src != NULL &&
+		    src->sin_addr.s_addr != INADDR_ANY &&
+		    src->sin_addr.s_addr != dap->uda_ipaddr_be) {
+			ret = -FI_ENODATA;
+			goto fail;
+		}
 		sin = calloc(1, sizeof(*sin));
 		fi->src_addr = sin;
 		if (sin == NULL) {
@@ -145,6 +152,17 @@ usdf_fill_addr_info(struct fi_info *fi, struct fi_info *hints,
 		fi->src_addrlen = sizeof(*sin);
 		sin->sin_family = AF_INET;
 		sin->sin_addr.s_addr = dap->uda_ipaddr_be;
+		if (src != NULL) {
+			sin->sin_port = src->sin_port;
+		}
+
+		/* copy in dest if specified */
+		if (dest != NULL) {
+			sin = calloc(1, sizeof(*sin));
+			*sin = *dest;
+			fi->dest_addr = sin;
+			fi->dest_addrlen = sizeof(*sin);
+		}
 		break;
 	default:
 		break;
@@ -159,8 +177,13 @@ fail:
 
 
 static int
-usdf_fill_info_dgram(struct fi_info *hints, struct usd_device_attrs *dap,
-	struct fi_info **fi_first, struct fi_info **fi_last)
+usdf_fill_info_dgram(
+	struct fi_info *hints,
+	struct sockaddr_in *src,
+	struct sockaddr_in *dest,
+	struct usd_device_attrs *dap,
+	struct fi_info **fi_first,
+	struct fi_info **fi_last)
 {
 	struct fi_info *fi;
 	struct fi_fabric_attr *fattrp;
@@ -193,7 +216,7 @@ usdf_fill_info_dgram(struct fi_info *hints, struct usd_device_attrs *dap,
 	}
 	fi->ep_type = FI_EP_DGRAM;
 
-	ret = usdf_fill_addr_info(fi, hints, dap);
+	ret = usdf_fill_addr_info(fi, hints, src, dest, dap);
 	if (ret != 0) {
 		goto fail;
 	}
@@ -241,8 +264,13 @@ fail:
 }
 
 static int
-usdf_fill_info_msg(struct fi_info *hints, struct usd_device_attrs *dap,
-	struct fi_info **fi_first, struct fi_info **fi_last)
+usdf_fill_info_msg(
+	struct fi_info *hints,
+	struct sockaddr_in *src,
+	struct sockaddr_in *dest,
+	struct usd_device_attrs *dap,
+	struct fi_info **fi_first,
+	struct fi_info **fi_last)
 {
 	struct fi_info *fi;
 	struct fi_fabric_attr *fattrp;
@@ -275,7 +303,7 @@ usdf_fill_info_msg(struct fi_info *hints, struct usd_device_attrs *dap,
 	}
 	fi->ep_type = FI_EP_MSG;
 
-	ret = usdf_fill_addr_info(fi, hints, dap);
+	ret = usdf_fill_addr_info(fi, hints, src, dest, dap);
 	if (ret != 0) {
 		goto fail;
 	}
@@ -329,7 +357,8 @@ usdf_getinfo(uint32_t version, const char *node, const char *service,
 	struct usd_device *dev;
 	struct usd_device_attrs dattr;
 	struct addrinfo *ai;
-	struct sockaddr_in *sin;
+	struct sockaddr_in *src;
+	struct sockaddr_in *dest;
 	enum fi_ep_type ep_type;
 	int metric;
 	int num_devs;
@@ -339,15 +368,28 @@ usdf_getinfo(uint32_t version, const char *node, const char *service,
 	fi_first = NULL;
 	fi_last = NULL;
 	ai = NULL;
-	sin = NULL;
+	src = NULL;
+	dest = NULL;
 	dev = NULL;
 
-	if (node != NULL) {
+	if (node != NULL || service != NULL) {
 		ret = getaddrinfo(node, service, NULL, &ai);
 		if (ret != 0) {
 			return -errno;
 		}
-		sin = (struct sockaddr_in *)ai->ai_addr;
+		if (flags & FI_SOURCE) {
+			src = (struct sockaddr_in *)ai->ai_addr;
+		} else {
+			dest = (struct sockaddr_in *)ai->ai_addr;
+		}
+	}
+	if (hints != NULL) {
+		if (dest == NULL && hints->dest_addr != NULL) {
+			dest = hints->dest_addr;
+		}
+		if (src == NULL && hints->src_addr != NULL) {
+			src = hints->src_addr;
+		}
 	}
 
 	num_devs = USD_MAX_DEVICES;
@@ -368,9 +410,9 @@ usdf_getinfo(uint32_t version, const char *node, const char *service,
 		}
 
 		/* See if dest is reachable from this device */
-		if (node != NULL) {
+		if (dest != NULL) {
 			ret = usd_get_dest_distance(dev,
-					sin->sin_addr.s_addr, &metric);
+					dest->sin_addr.s_addr, &metric);
 			if (ret != 0) {
 				goto fail;
 			}
@@ -381,7 +423,7 @@ usdf_getinfo(uint32_t version, const char *node, const char *service,
 
 		/* Does this device match requested attributes? */
 		if (hints != NULL) {
-			ret = usdf_validate_hint_caps(hints, &dattr);
+			ret = usdf_validate_hints(hints, &dattr);
 			if (ret != 0) {
 				goto next_dev;
 			}
@@ -392,7 +434,7 @@ usdf_getinfo(uint32_t version, const char *node, const char *service,
 		}
 
 		if (ep_type == FI_EP_DGRAM || ep_type == FI_EP_UNSPEC) {
-			ret = usdf_fill_info_dgram(hints, &dattr,
+			ret = usdf_fill_info_dgram(hints, src, dest, &dattr,
 					&fi_first, &fi_last);
 			if (ret != 0 && ret != -FI_ENODATA) {
 				goto fail;
@@ -400,7 +442,7 @@ usdf_getinfo(uint32_t version, const char *node, const char *service,
 		}
 
 		if (ep_type == FI_EP_MSG || ep_type == FI_EP_UNSPEC) {
-			ret = usdf_fill_info_msg(hints, &dattr,
+			ret = usdf_fill_info_msg(hints, src, dest, &dattr,
 					&fi_first, &fi_last);
 			if (ret != 0 && ret != -FI_ENODATA) {
 				goto fail;

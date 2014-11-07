@@ -101,6 +101,7 @@ struct usdf_ep {
 	uint64_t ep_caps;
 	uint64_t ep_mode;
 	uint64_t ep_req_port;
+	int ep_conn_sock;
 	struct usdf_domain *ep_domain;
 	struct usdf_av *ep_av;
 	struct usdf_cq *ep_wcq;

@@ -39,14 +39,13 @@
 #endif /* HAVE_CONFIG_H */
 
 #include <asm/types.h>
+#include <unistd.h>
 #include <assert.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <netinet/in.h>
-#include <poll.h>
 #include <stdio.h>
 #include <stdlib.h>
-#include <string.h>
 
 #include <rdma/fabric.h>
 #include <rdma/fi_cm.h>
@@ -90,22 +89,40 @@ usdf_cm_msg_connect(struct fid_ep *fep, const void *addr,
 	struct usdf_ep *ep;
 	const struct sockaddr_in *sin;
 	int ret;
-	int s;
 
 	ep = ep_ftou(fep);
 	sin = addr;
 
-	s = socket(AF_INET, SOCK_STREAM, 0);
-	if (s == -1) {
+	ep->ep_conn_sock = socket(AF_INET, SOCK_STREAM, 0);
+	if (ep->ep_conn_sock == -1) {
 		ret = -errno;
+		goto fail;
 	}
 
-	ret = connect(s, (struct sockaddr *)sin, sizeof(*sin));
-	if (ret != 0) {
+	ret = fcntl(ep->ep_conn_sock, F_GETFL, 0);
+	if (ret == -1) {
 		ret = -errno;
+		goto fail;
 	}
-	(void)ep;
+	ret = fcntl(ep->ep_conn_sock, F_SETFL, ret | O_NONBLOCK);
+	if (ret == -1) {
+		ret = -errno;
+		goto fail;
+	}
 
+	ret = connect(ep->ep_conn_sock, (struct sockaddr *)sin, sizeof(*sin));
+	if (ret != 0 && errno != EINPROGRESS) {
+		ret = -errno;
+		goto fail;
+	}
+printf("connect in progress\n");
+
+	return 0;
+
+fail:
+	if (ep->ep_conn_sock != -1) {
+		close(ep->ep_conn_sock);
+	}
 	return ret;
 }
 
