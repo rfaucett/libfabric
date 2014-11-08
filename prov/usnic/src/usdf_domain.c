@@ -57,6 +57,7 @@
 
 #include "usnic_direct.h"
 #include "usdf.h"
+#include "usdf_progress.h"
 
 static int
 usdf_domain_bind(struct fid *fid, struct fid *bfid, uint64_t flags)
@@ -189,7 +190,7 @@ usdf_domain_open(struct fid_fabric *fabric, struct fi_info *info,
 		goto fail;
 	}
 	ret = pthread_create(&udp->dom_thread, NULL,
-			usdf_progression_thread, udp);
+			usdf_domain_progression_thread, udp);
 	if (ret != 0) {
 		ret = -ret;
 		goto fail;

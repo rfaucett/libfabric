@@ -73,6 +73,9 @@ struct usdf_fabric {
 	struct fid_fabric   fab_fid;
 	char *fab_name;
 	atomic_t fab_refcnt;
+	pthread_t fab_thread;
+	int fab_exit;
+	int fab_epollfd;
 };
 #define fab_ftou(FAB) container_of(FAB, struct usdf_fabric, fab_fid)
 #define fab_utof(FP) (&(FP)->fab_fid)
@@ -105,6 +108,7 @@ struct usdf_pep {
 	struct usdf_eq *pep_eq;
 	int pep_sock;
 	int pep_backlog;
+	struct usdf_poll_item *pep_pollitem;
 };
 #define pep_ftou(FPEP) container_of(FPEP, struct usdf_pep, pep_fid)
 #define pep_fidtou(FID) container_of(FID, struct usdf_pep, pep_fid.fid)
@@ -220,10 +224,6 @@ struct usdf_av_req {
  */
 
 /* progression */
-void usdf_progress(struct usdf_domain *udp);
-void *usdf_progression_thread(void *v);
-int usdf_add_progression_item(struct usdf_domain *udp);
-void usdf_progression_item_complete(struct usdf_domain *udp);
 void usdf_av_progress(struct usdf_domain *udp);
 
 ssize_t usdf_eq_write_internal(struct usdf_eq *eq, uint32_t event,

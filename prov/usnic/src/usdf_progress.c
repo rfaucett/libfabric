@@ -85,14 +85,12 @@ usdf_progression_item_complete(struct usdf_domain *udp)
 	atomic_dec(&udp->dom_pending_items);
 }
 
-int
+static int
 usdf_progression_cb(void *v)
 {
 	struct usdf_domain *udp;
 	int64_t val;
 	int n;
-
-	printf("usdf_progression_cb v=%p\n", v);
 
 	udp = v;
 	n = read(udp->dom_eventfd, &val, sizeof(val));
@@ -104,7 +102,7 @@ usdf_progression_cb(void *v)
 }
 
 void *
-usdf_progression_thread(void *v)
+usdf_domain_progression_thread(void *v)
 {
 	struct usdf_domain *udp;
 	struct epoll_event ev;
@@ -156,5 +154,40 @@ usdf_progression_thread(void *v)
 
 		// if ret == 0 ?  i.e. only on timeout?
 		usdf_progress(udp);
+	}
+}
+
+void *
+usdf_fabric_progression_thread(void *v)
+{
+	struct usdf_fabric *fp;
+	struct epoll_event ev;
+	struct usdf_poll_item *pip;
+	int epfd;
+	int ret;
+	int n;
+
+	fp = v;
+	epfd = fp->fab_epollfd;
+
+	while (1) {
+
+		n = epoll_wait(epfd, &ev, 1, -1);
+		if (n == -1) {
+			pthread_exit(NULL);
+		}
+		/* consume event if there was one */
+		if (n == 1) {
+			pip = ev.data.ptr;
+printf("got event pip = %p\n", pip);
+			ret = pip->pi_rtn(pip->pi_context);
+			if (ret != 0) {
+				pthread_exit(NULL);
+			}
+		}
+
+		if (fp->fab_exit) {
+			pthread_exit(NULL);
+		}
 	}
 }

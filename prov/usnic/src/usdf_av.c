@@ -61,6 +61,7 @@
 
 #include "usnic_direct.h"
 #include "usdf.h"
+#include "usdf_progress.h"
 #include "usd_queue.h"
 
 /* would like to move to include/rdma */

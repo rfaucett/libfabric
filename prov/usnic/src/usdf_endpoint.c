@@ -43,7 +43,7 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <netinet/in.h>
-#include <poll.h>
+#include <sys/epoll.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -62,6 +62,7 @@
 #include "usd.h"
 #include "usdf.h"
 #include "usdf_endpoint.h"
+#include "usdf_progress.h"
 
 static int
 usdf_ep_bind(struct fid *fid, struct fid *bfid, uint64_t flags)
@@ -227,17 +228,47 @@ printf("bind EQ!\n");
 	return 0;
 }
 
+static int
+usdf_pep_listen_cb(void *v)
+{
+	struct usdf_pep *pep;
+	struct sockaddr_in sin;
+	socklen_t socklen;
+	int ret;
+
+	pep = v;
+
+	socklen = sizeof(sin);
+	ret = accept(pep->pep_sock, &sin, &socklen);
+	printf("connreq on %p, ret = %d (%x)!\n", pep, ret, sin.sin_addr.s_addr);
+
+	return 0;
+}
+
 int
 usdf_pep_listen(struct fid_pep *fpep)
 {
 	struct usdf_pep *pep;
+	struct epoll_event ev;
+	struct usdf_fabric *fp;
 	int ret;
 
 	pep = pep_ftou(fpep);
+	fp = pep->pep_fabric;
 
 	ret = listen(pep->pep_sock, pep->pep_backlog);
 	if (ret != 0) {
 		ret = -errno;
+	}
+
+	pep->pep_pollitem->pi_rtn = &usdf_pep_listen_cb;
+	pep->pep_pollitem->pi_context = pep;
+	ev.events = EPOLLIN;
+	ev.data.ptr = pep->pep_pollitem;
+printf("add ptr = %p\n", ev.data.ptr);
+	ret = epoll_ctl(fp->fab_epollfd, EPOLL_CTL_ADD, pep->pep_sock, &ev);
+	if (ret == -1) {
+		return -errno;
 	}
 printf("listen ret=%d\n", ret);
 
@@ -315,6 +346,11 @@ usdf_passive_ep_open(struct fid_fabric *fabric, struct fi_info *info,
 	if (pep == NULL) {
 		return -FI_ENOMEM;
 	}
+	pep->pep_pollitem = calloc(1, sizeof(*pep->pep_pollitem));
+	if (pep->pep_pollitem == NULL) {
+		ret = -FI_ENOMEM;
+		goto fail;
+	}
 
 	pep->pep_fid.fid.fclass = FI_CLASS_PEP;
 	pep->pep_fid.fid.context = context;
@@ -357,6 +393,9 @@ fail:
 	if (pep != NULL) {
 		if (pep->pep_sock != -1) {
 			close(pep->pep_sock);
+		}
+		if (pep->pep_pollitem != NULL) {
+			free(pep->pep_pollitem);
 		}
 		free(pep);
 	}
