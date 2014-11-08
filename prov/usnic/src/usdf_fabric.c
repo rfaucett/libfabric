@@ -43,7 +43,7 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <netinet/in.h>
-#include <poll.h>
+#include <sys/epoll.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -61,6 +61,7 @@
 
 #include "usnic_direct.h"
 #include "usdf.h"
+#include "usdf_progress.h"
 #include "fi_usnic.h"
 #include "libnl_utils.h"
 
@@ -520,6 +521,7 @@ usdf_getinfo(uint32_t version, const char *node, const char *service,
 	struct usd_device_attrs *dap;
 	struct fi_info *fi_first;
 	struct fi_info *fi_last;
+	struct fi_info *fi_next;
 	struct addrinfo *ai;
 	struct sockaddr_in *src;
 	struct sockaddr_in *dest;
@@ -623,8 +625,12 @@ usdf_getinfo(uint32_t version, const char *node, const char *service,
 	}
 
 fail:
-	if (ret != 0 && fi_first != NULL) {
-		fi_freeinfo_internal(fi_first);
+	if (ret != 0) {
+		while (fi_first != NULL) {
+			fi_next = fi_first->next;
+			fi_freeinfo_internal(fi_first);
+			fi_first = fi_next;
+		}
 	}
 	if (ai != NULL) {
 		freeaddrinfo(ai);
@@ -636,11 +642,18 @@ static int
 usdf_fabric_close(fid_t fid)
 {
 	struct usdf_fabric *fp;
+	void *rv;
 
 	fp = fab_fidtou(fid);
 	if (atomic_get(&fp->fab_refcnt) > 0) {
 		return -FI_EBUSY;
 	}
+	/* Tell progression thread to exit */
+	fp->fab_exit = 1;
+	close(fp->fab_epollfd);
+printf("fab joining!\n");
+	pthread_join(fp->fab_thread, &rv);
+printf("joined!\n");
 
 	free(fp);
 	return 0;
@@ -669,6 +682,7 @@ usdf_fabric_open(struct fi_fabric_attr *fattrp, struct fid_fabric **fabric,
 	if (fp == NULL) {
 		return -FI_ENOMEM;
 	}
+	fp->fab_epollfd = -1;
 
 	fp->fab_name = strdup(fattrp->name);
 	if (fp->fab_name == NULL) {
@@ -681,12 +695,28 @@ usdf_fabric_open(struct fi_fabric_attr *fattrp, struct fid_fabric **fabric,
 	fp->fab_fid.fid.ops = &usdf_fi_ops;
 	fp->fab_fid.ops = &usdf_ops_fabric;
 
+	fp->fab_epollfd = epoll_create(1024);
+	if (fp->fab_epollfd == -1) {
+		ret = -errno;
+		goto fail;
+	}
+	ret = pthread_create(&fp->fab_thread, NULL,
+			usdf_fabric_progression_thread, fp);
+	if (ret != 0) {
+		ret = -ret;
+		goto fail;
+	}
+
+
 	atomic_init(&fp->fab_refcnt, 0);
 	*fabric = &fp->fab_fid;
 	return 0;
 
 fail:
 	if (fp != NULL) {
+		if (fp->fab_epollfd != -1) {
+			close(fp->fab_epollfd);
+		}
 		free(fp);
 	}
 	return ret;
