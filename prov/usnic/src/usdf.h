@@ -39,6 +39,8 @@
 #include <sys/queue.h>
 #include <pthread.h>
 
+#include "usdf_progress.h"
+
 #define USDF_FI_NAME "usnic"
 #define USDF_HDR_BUF_ENTRY 64
 #define USDF_EP_CAP_PIO (1ULL << 63)
@@ -107,8 +109,14 @@ struct usdf_pep {
 	struct usdf_fabric *pep_fabric;
 	struct usdf_eq *pep_eq;
 	int pep_sock;
-	int pep_backlog;
-	struct usdf_poll_item *pep_pollitem;
+	struct usdf_poll_item pep_pollitem;
+
+	pthread_spinlock_t pep_cr_lock;
+	size_t pep_cr_max_data;
+	uint32_t pep_backlog;
+	uint32_t pep_cr_alloced;
+	TAILQ_HEAD(,usdf_connreq) pep_cr_free;
+	TAILQ_HEAD(,usdf_connreq) pep_cr_pending;
 };
 #define pep_ftou(FPEP) container_of(FPEP, struct usdf_pep, pep_fid)
 #define pep_fidtou(FID) container_of(FID, struct usdf_pep, pep_fid.fid)
@@ -234,7 +242,7 @@ int usdf_domain_open(struct fid_fabric *fabric, struct fi_info *info,
 	struct fid_domain **domain, void *context);
 int usdf_eq_open(struct fid_fabric *fabric, struct fi_eq_attr *attr,
 	struct fid_eq **eq, void *context);
-int usdf_passive_ep_open(struct fid_fabric *fabric, struct fi_info *info,
+int usdf_pep_open(struct fid_fabric *fabric, struct fi_info *info,
 		struct fid_pep **pep_p, void *context);
 
 /* fi_ops_domain */

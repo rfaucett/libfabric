@@ -150,6 +150,7 @@ _usnic_files = \
 	prov/usnic/src/usdf_eq.c \
 	prov/usnic/src/usdf_av.c \
 	prov/usnic/src/usdf_endpoint.c \
+	prov/usnic/src/usdf_pep.c \
 	prov/usnic/src/usdf_ep_dgram.c \
 	prov/usnic/src/usdf_ep_msg.c \
 	prov/usnic/src/usdf_msg.c \

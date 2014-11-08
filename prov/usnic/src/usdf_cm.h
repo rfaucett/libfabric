@@ -33,20 +33,31 @@
  * ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
  * POSSIBILITY OF SUCH DAMAGE.
  */
-#ifndef _USDF_PROGRESS_H_
-#define _USDF_PROGRESS_H_
+#ifndef _USDF_CM_H_
+#define _USDF_CM_H_
 
-struct usdf_domain;
+#include <sys/queue.h>
 
-struct usdf_poll_item {
-	int (*pi_rtn)(void *context);
-	void *pi_context;
+struct usdf_connreq_msg {
+	uint32_t creq_data_len;
+} __attribute__((packed));
+
+struct usdf_connresp_msg {
+	uint32_t cresp_result;
+	uint32_t cresp_reason;
+} __attribute__((packed));
+
+struct usdf_connreq {
+	int cr_sockfd;
+	struct usdf_pep *cr_pep;
+	TAILQ_ENTRY(usdf_connreq) cr_link;
+
+	struct usdf_poll_item cr_pollitem;
+
+	uint8_t *cr_ptr;
+	size_t cr_resid;
+
+	uint8_t cr_data[0];
 };
 
-void usdf_progress(struct usdf_domain *udp);
-void *usdf_domain_progression_thread(void *v);
-void *usdf_fabric_progression_thread(void *v);
-int usdf_add_progression_item(struct usdf_domain *udp);
-void usdf_progression_item_complete(struct usdf_domain *udp);
-
-#endif /* _USDF_PROGRESS_H_ */
+#endif /* _USDF_CM_H_ */
