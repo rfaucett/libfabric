@@ -142,6 +142,7 @@ libusnic_direct_sources = \
 
 _usnic_files = \
 	$(libusnic_direct_sources) \
+	prov/usnic/src/fi_usnic.h \
 	prov/usnic/src/usdf.h \
 	prov/usnic/src/usdf_fabric.c \
 	prov/usnic/src/usdf_domain.c \
@@ -150,13 +151,18 @@ _usnic_files = \
 	prov/usnic/src/usdf_eq.c \
 	prov/usnic/src/usdf_av.c \
 	prov/usnic/src/usdf_endpoint.c \
+	prov/usnic/src/usdf_endpoint.h \
 	prov/usnic/src/usdf_pep.c \
 	prov/usnic/src/usdf_ep_dgram.c \
 	prov/usnic/src/usdf_ep_msg.c \
 	prov/usnic/src/usdf_msg.c \
+	prov/usnic/src/usdf_msg.h \
 	prov/usnic/src/usdf_dgram.c \
+	prov/usnic/src/usdf_dgram.h \
 	prov/usnic/src/usdf_progress.c \
-	prov/usnic/src/usdf_cm.c
+	prov/usnic/src/usdf_progress.h \
+	prov/usnic/src/usdf_cm.c \
+	prov/usnic/src/usdf_cm.h
 
 _usnic_cppflags = \
         -D__LIBUSNIC__ \
