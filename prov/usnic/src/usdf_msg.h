@@ -33,8 +33,8 @@
  * ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
  * POSSIBILITY OF SUCH DAMAGE.
  */
-#ifndef _USDF_MSG_RC_H_
-#define _USDF_MSG_RC_H_
+#ifndef _USDF_MSG_H_
+#define _USDF_MSG_H_
 
 /* fi_ops_cm for RC */
 int usdf_cm_msg_connect(struct fid_ep *ep, const void *addr,
@@ -64,4 +64,4 @@ ssize_t usdf_msg_inject(struct fid_ep *ep, const void *buf, size_t len);
 	
 
 
-#endif /* _USDF_MSG_RC_H_ */
+#endif /* _USDF_MSG_H_ */

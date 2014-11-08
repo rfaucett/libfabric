@@ -90,6 +90,7 @@ struct usdf_domain {
 	pthread_t dom_thread;
 	int dom_exit;
 	int dom_eventfd;
+	int dom_epollfd;
 	atomic_t dom_pending_items;
 	pthread_spinlock_t dom_usd_lock;
 };

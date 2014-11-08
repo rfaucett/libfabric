@@ -42,7 +42,7 @@
 #include <stdlib.h>
 #include <errno.h>
 #include <unistd.h>
-#include <poll.h>
+#include <sys/epoll.h>
 #include <sys/eventfd.h>
 
 #include <rdma/fabric.h>
@@ -178,6 +178,11 @@ usdf_domain_open(struct fid_fabric *fabric, struct fi_info *info,
 	udp->dom_fid.ops = &usdf_domain_ops;
 	udp->dom_fid.mr = &usdf_domain_mr_ops;
 
+	udp->dom_epollfd = epoll_create(1024);
+	if (udp->dom_epollfd == -1) {
+		ret = -errno;
+		goto fail;
+	}
 	udp->dom_eventfd = eventfd(0, EFD_NONBLOCK | EFD_SEMAPHORE);
 	if (udp->dom_eventfd == -1) {
 		ret = -errno;
@@ -203,6 +208,9 @@ fail:
 	if (udp != NULL) {
 		if (udp->dom_eventfd != -1) {
 			close(udp->dom_eventfd);
+		}
+		if (udp->dom_epollfd != -1) {
+			close(udp->dom_epollfd);
 		}
 		free(udp);
 	}

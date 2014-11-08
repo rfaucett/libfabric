@@ -42,7 +42,7 @@
 #include <stdlib.h>
 #include <unistd.h>
 #include <errno.h>
-#include <poll.h>
+#include <sys/epoll.h>
 
 #include <rdma/fabric.h>
 #include <rdma/fi_cm.h>
@@ -55,6 +55,7 @@
 
 #include "usnic_direct.h"
 #include "usdf.h"
+#include "usdf_progress.h"
 
 void
 usdf_progress(struct usdf_domain *udp)
@@ -84,21 +85,48 @@ usdf_progression_item_complete(struct usdf_domain *udp)
 	atomic_dec(&udp->dom_pending_items);
 }
 
+int
+usdf_progression_cb(void *v)
+{
+	struct usdf_domain *udp;
+	int64_t val;
+	int n;
+
+	printf("usdf_progression_cb v=%p\n", v);
+
+	udp = v;
+	n = read(udp->dom_eventfd, &val, sizeof(val));
+	if (n != sizeof(val)) {
+		return -FI_EIO;
+	}
+
+	return 0;
+}
+
 void *
 usdf_progression_thread(void *v)
 {
 	struct usdf_domain *udp;
-	int64_t val;
-	struct pollfd pfd;
+	struct epoll_event ev;
+	struct usdf_poll_item myitem;
+	struct usdf_poll_item *pip;
 	int sleep_time;
+	int epfd;
 	int ret;
 	int n;
 
 	udp = v;
+	epfd = udp->dom_epollfd;
 
-	pfd.fd = udp->dom_eventfd;
-	pfd.events = POLLIN;
-	pfd.revents = 0;
+	myitem.pi_rtn = usdf_progression_cb;
+	myitem.pi_context = udp;
+
+	ev.events = EPOLLIN;
+	ev.data.ptr = &myitem;
+	ret = epoll_ctl(epfd, EPOLL_CTL_ADD, udp->dom_eventfd, &ev);
+	if (ret == -1) {
+		pthread_exit(NULL);
+	}
 
 	while (1) {
 
@@ -109,14 +137,15 @@ usdf_progression_thread(void *v)
 			sleep_time = -1;
 		}
 
-		ret = poll(&pfd, 1, sleep_time);
-		if (ret == -1) {
+		n = epoll_wait(epfd, &ev, 1, sleep_time);
+		if (n == -1) {
 			pthread_exit(NULL);
 		}
 		/* consume write if there was one */
-		if (ret == 1) {
-			n = read(udp->dom_eventfd, &val, sizeof(val));
-			if (n != sizeof(val)) {
+		if (n == 1) {
+			pip = ev.data.ptr;
+			ret = pip->pi_rtn(pip->pi_context);
+			if (ret != 0) {
 				pthread_exit(NULL);
 			}
 		}
@@ -125,6 +154,7 @@ usdf_progression_thread(void *v)
 			pthread_exit(NULL);
 		}
 
+		// if ret == 0 ?  i.e. only on timeout?
 		usdf_progress(udp);
 	}
 }
