@@ -518,9 +518,6 @@ usdf_av_open(struct fid_domain *domain, struct fi_av_attr *attr,
 	struct usdf_domain *udp;
 	struct usdf_av *av;
 
-	if (attr->name != NULL) {
-		return -FI_ENOSYS;
-	}
 	if ((attr->flags & ~(FI_EVENT | FI_READ)) != 0) {
 		return -FI_ENOSYS;
 	}

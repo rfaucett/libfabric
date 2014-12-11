@@ -132,3 +132,31 @@ usdf_fabric_progression_thread(void *v)
 		}
 	}
 }
+
+/*
+ * Progress operations in this domain
+ */
+void usdf_msg_progress_tx(struct usdf_tx *tx);
+void
+usdf_progress_domain(struct usdf_domain *udp)
+{
+	struct usdf_tx *tx;
+	struct usdf_cq_hard *hcq;
+
+	/* one big hammer lock... */
+	pthread_spin_lock(&udp->dom_progress_lock);
+
+	TAILQ_FOREACH(hcq, &udp->dom_hcq_list, cqh_dom_link) {
+		hcq->cqh_progress(hcq);
+	}
+
+	while (!TAILQ_EMPTY(&udp->dom_tx_ready)) {
+		tx = TAILQ_FIRST(&udp->dom_tx_ready);
+		TAILQ_REMOVE_MARK(&udp->dom_tx_ready, tx, tx_link);
+
+		/* XXX switch to tx->tx_progress(tx) */
+		usdf_msg_progress_tx(tx);
+	}
+
+	pthread_spin_unlock(&udp->dom_progress_lock);
+}
