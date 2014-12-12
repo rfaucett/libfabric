@@ -198,7 +198,7 @@ usdf_cm_msg_accept(struct fid_ep *fep, const void *param, size_t paramlen)
 
 	return 0;
 fail:
-	usd_destroy_dest(ep->e.msg.ep_dest);
+	free(ep->e.msg.ep_dest);
 	/* XXX release queues */
 	return ret;
 }
@@ -301,7 +301,7 @@ usdf_cm_msg_connect_cb_rd(void *v)
 				entry_len, 0);
 		free(entry);
 		if (ret != entry_len) {
-			usd_destroy_dest(ep->e.msg.ep_dest);
+			free(ep->e.msg.ep_dest);
 			ep->e.msg.ep_dest = NULL;
 			usdf_cm_msg_connreq_failed(crp, ret);
 			return 0;

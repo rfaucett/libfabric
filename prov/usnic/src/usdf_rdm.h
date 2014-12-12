@@ -55,7 +55,7 @@
 struct usdf_rdm_qe {
 	void *rd_context;
 	uint32_t rd_msg_id_be;
-	struct usdf_tx *rd_tx;
+	// struct usdf_tx *rd_tx;
 
 	struct iovec rd_iov[USDF_RDM_MAX_SGE];
 	size_t rd_last_iov;
@@ -70,18 +70,50 @@ struct usdf_rdm_qe {
 
 	union {
 		struct {
-			struct usd_dest *rd_dest;
+			struct usdf_dest *rd_dest;
 			uint16_t rd_next_tx_seq;
+			uint16_t rd_last_rx_ack;
 			TAILQ_ENTRY(usdf_rdm_qe) rd_ack_link;
 		} tx;
 		struct {
-			uint32_t rd_ipaddr_be;
-			uint16_r rd_port_be;
-			uint16_t rd_next_rx_seq;
-
-			struct usdf_rdm_qe *rd_hash_link;
+			struct usdf_rdm_connection *rd_conn;
 		} rx;
-	}r;
+	} r;
+};
+
+/*
+ * RDM connection state
+ */
+enum {
+	USDF_DCS_DISCONNECTED,
+	USDF_DCS_CONNECTING,
+	USDF_DCS_CONNECTED
+};
+
+/*
+ * We're only connectionless to the APP
+ */
+struct usdf_rdm_connection {
+	struct usd_udp_hdr dc_hdr;
+	uint16_t dc_state;
+	uint16_t dc_next_rx_seq;
+
+	struct usdf_rdm_qe *dc_cur_rqe;
+
+	struct usdf_rdm_qe *dc_hash_link;
+};
+
+struct usdf_rdm_tx_dest {
+	struct usdf_dest *rt_dest;
+	struct usdf_tx *rt_tx;
+	TAILQ_HEAD(,usd_rdm_qe) rt_wqe_posted;
+	size_t rt_fairness_credits;
+	size_t rt_seq_credits;
+
+	struct usdf_timer *rt_ack_timer;
+
+	TAILQ_ENTRY(usdf_rdm_tx_dest) rt_link;
+	struct usdf_rdm_tx_dest *rt_hash_next;
 };
 
 int usdf_rdm_post_recv(struct usdf_rx *rx, void *buf, size_t len);

@@ -726,6 +726,7 @@ usdf_ep_rdm_open(struct fid_domain *domain, struct fi_info *info,
 		rx->rx_fid.fid.fclass = FI_CLASS_RX_CTX;
 		atomic_init(&rx->rx_refcnt, 0);
 		rx->rx_domain = udp;
+		rx->rx_tx = tx;
 		atomic_inc(&udp->dom_refcnt);
 		if (info->rx_attr != NULL) {
 			ret = usdf_rdm_fill_rx_attr(info->rx_attr);

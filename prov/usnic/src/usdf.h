@@ -124,6 +124,7 @@ struct usdf_domain {
 	TAILQ_HEAD(,usdf_tx) dom_tx_ready;
 	TAILQ_HEAD(,usdf_cq_hard) dom_hcq_list;
 	struct usdf_rdm_qe *dom_rqe_hashtab;
+	struct usdf_rdm_tx_dest *dom_txd_hashtab;
 
 	/* used only by connected endpoints */
 	struct usdf_ep **dom_peer_tab;
@@ -180,10 +181,8 @@ struct usdf_tx {
 			atomic_t tx_next_msg_id;
 			struct usdf_rdm_qe *tx_wqe_buf;
 			TAILQ_HEAD(,usdf_rdm_qe) tx_free_wqe;
-			TAILQ_HEAD(,usdf_rdm_qe) tx_wqe_ready;
-			TAILQ_HEAD(,usdf_rdm_qe) tx_wqe_sent;
-			TAILQ_HEAD(,usdf_rdm_qe) tx_wqe_have_acks;
-			size_t tx_seq_credits;
+			TAILQ_HEAD(,usdf_rdm_tx_dest) tx_txd_ready;
+			TAILQ_HEAD(,usdf_rdm_tx_dest) tx_txd_free;
 
 			struct usdf_timer *tx_ack_timer;
 		} rdm;
@@ -213,6 +212,7 @@ struct usdf_rx {
 		} msg;
 		struct {
 			struct usdf_cq_hard *rx_hcq;
+			struct usdf_tx *rx_tx;
 
 			uint8_t *rx_bufs;
 			struct usdf_rdm_qe *rx_rqe_buf;
@@ -258,7 +258,7 @@ struct usdf_ep {
 		struct {
 
 			struct usdf_connreq *ep_connreq;
-			struct usd_dest *ep_dest;
+			struct usdf_dest *ep_dest;
 			uint32_t ep_rem_peer_id;
 			uint32_t ep_lcl_peer_id;
 

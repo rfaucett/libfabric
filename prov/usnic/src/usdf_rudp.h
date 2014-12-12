@@ -46,10 +46,11 @@
 #define RUDP_SEQ_GE(A, B) (RUDP_SEQ_DIFF(A, B) >= 0)
 
 enum {
-    /* data messages */
-    RUDP_OP_FIRST   = 0x00,
-    RUDP_OP_MID     = 0x01,
+    /* data messages (a bitmask of FIRST and LAST) */
+    RUDP_OP_MID     = 0x00,
+    RUDP_OP_FIRST   = 0x01,
     RUDP_OP_LAST    = 0x02,
+    RUDP_OP_ONLY    = 0x03,
 
     /* control messages */
     RUDP_OP_CONNECT_REQ  = 0x81,
@@ -57,6 +58,8 @@ enum {
     RUDP_OP_NAK       = 0x83,
     RUDP_OP_ACK       = 0x84,
 };
+
+#define RUDP_OP_DATA_MASK (RUDP_OP_FIRST | RUDP_OP_LAST)
 
 struct rudp_rc_data_msg {
     u_int32_t offset;  /* 4 */

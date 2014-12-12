@@ -507,6 +507,10 @@ usdf_msg_send_ack(struct usdf_tx *tx, struct usdf_ep *ep)
 	info->wp_len = 0;
 }
 
+/*
+ * If this TX has sends to do and is not on domain ready list, then
+ * this completion means we can go back on the domain ready list
+ */
 static void
 usdf_msg_send_completion(struct usd_completion *comp)
 {
@@ -808,10 +812,10 @@ usdf_msg_handle_recv(struct usdf_domain *udp, struct usd_completion *comp)
 
 		rqe = ep->e.msg.ep_cur_recv;
 		if (rqe == NULL) {
-			rqe = TAILQ_FIRST(&rx->r.msg.rx_posted_rqe);
-			if (rqe == NULL) {
+			if (TAILQ_EMPTY(&rx->r.msg.rx_posted_rqe)) {
 				goto dropit;
 			}
+			rqe = TAILQ_FIRST(&rx->r.msg.rx_posted_rqe);
 			TAILQ_REMOVE(&rx->r.msg.rx_posted_rqe, rqe, ms_link);
 			ep->e.msg.ep_cur_recv = rqe;
 		}
