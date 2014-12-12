@@ -123,6 +123,7 @@ struct usdf_domain {
 	pthread_spinlock_t dom_progress_lock;
 	TAILQ_HEAD(,usdf_tx) dom_tx_ready;
 	TAILQ_HEAD(,usdf_cq_hard) dom_hcq_list;
+	struct usdf_rdm_qe *dom_rqe_hashtab;
 
 	/* used only by connected endpoints */
 	struct usdf_ep **dom_peer_tab;
@@ -162,6 +163,7 @@ struct usdf_tx {
 
 	struct fi_tx_attr tx_attr;
 	struct usd_qp *tx_qp;
+	void (*tx_progress)(struct usdf_tx *tx);
 
 	union {
 		struct {
@@ -170,17 +172,20 @@ struct usdf_tx {
 			struct usdf_msg_qe *tx_wqe_buf;
 			TAILQ_HEAD(,usdf_msg_qe) tx_free_wqe;
 			TAILQ_HEAD(,usdf_ep) tx_ep_ready;
-			TAILQ_HEAD(,usdf_ep) tx_ep_blocked;
 			TAILQ_HEAD(,usdf_ep) tx_ep_have_acks;
 		} msg;
 		struct {
 			struct usdf_cq_hard *tx_hcq;
 
+			atomic_t tx_next_msg_id;
 			struct usdf_rdm_qe *tx_wqe_buf;
 			TAILQ_HEAD(,usdf_rdm_qe) tx_free_wqe;
-			TAILQ_HEAD(,usdf_ep) tx_ep_ready;
-			TAILQ_HEAD(,usdf_ep) tx_ep_blocked;
-			TAILQ_HEAD(,usdf_ep) tx_ep_have_acks;
+			TAILQ_HEAD(,usdf_rdm_qe) tx_wqe_ready;
+			TAILQ_HEAD(,usdf_rdm_qe) tx_wqe_sent;
+			TAILQ_HEAD(,usdf_rdm_qe) tx_wqe_have_acks;
+			size_t tx_seq_credits;
+
+			struct usdf_timer *tx_ack_timer;
 		} rdm;
 	} t;
 };
@@ -287,11 +292,7 @@ struct usdf_ep {
 
 			struct usdf_rdm_qe *ep_cur_recv;
 			uint16_t ep_next_rx_seq;
-			TAILQ_ENTRY(usdf_ep) ep_ack_link;
 
-			struct usdf_timer_entry *ep_ack_timer;
-
-			TAILQ_ENTRY(usdf_ep) ep_link;
 		} rdm;
 	 } e;
 };

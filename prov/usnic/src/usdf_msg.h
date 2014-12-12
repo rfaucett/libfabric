@@ -76,7 +76,8 @@ int usdf_msg_fill_rx_attr(struct fi_rx_attr *rxattr);
 int usdf_cq_msg_poll(struct usd_cq *ucq, struct usd_completion *comp);
 void usdf_msg_ep_timeout(void *vep);
 
-void usdf_msg_progress_hcq(struct usdf_cq_hard *hcq);
+void usdf_msg_hcq_progress(struct usdf_cq_hard *hcq);
+void usdf_msg_tx_progress(struct usdf_tx *tx);
 
 
 /* fi_ops_cm for RC */

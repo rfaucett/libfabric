@@ -245,7 +245,7 @@ usdf_msg_send(struct fid_ep *fep, const void *buf, size_t len, void *desc,
 
 	pthread_spin_unlock(&udp->dom_progress_lock);
 
-	usdf_progress_domain(udp);
+	usdf_domain_progress(udp);
 
 	return 0;
 }
@@ -527,7 +527,7 @@ usdf_msg_send_completion(struct usd_completion *comp)
  * b) all endpoints are complete or blocked awaiting ACKs
  */
 void
-usdf_msg_progress_tx(struct usdf_tx *tx)
+usdf_msg_tx_progress(struct usdf_tx *tx)
 {
 	struct usdf_ep *ep;
 	struct usd_qp_impl *qp;
@@ -901,7 +901,7 @@ dropit:
  * Process message completions
  */
 void
-usdf_msg_progress_hcq(struct usdf_cq_hard *hcq)
+usdf_msg_hcq_progress(struct usdf_cq_hard *hcq)
 {
 	struct usd_completion comp;
 

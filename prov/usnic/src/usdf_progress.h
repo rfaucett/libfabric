@@ -47,6 +47,6 @@ struct usdf_domain;
 void *usdf_fabric_progression_thread(void *v);
 int usdf_fabric_wake_thread(struct usdf_fabric *fp);
 int usdf_fabric_progression_cb(void *v);
-void usdf_progress_domain(struct usdf_domain *udp);
+void usdf_domain_progress(struct usdf_domain *udp);
 
 #endif /* _USDF_PROGRESS_H_ */

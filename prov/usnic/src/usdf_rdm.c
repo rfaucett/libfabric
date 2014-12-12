@@ -67,22 +67,13 @@
 #include "usdf_progress.h"
 
 static inline void
-usdf_rdm_ep_ready(struct usdf_ep *ep)
+usdf_rdm_tx_ready(struct usdf_tx *tx)
 {
-	 struct usdf_tx *tx;
-
-	 tx = ep->ep_tx;
-	 if (!TAILQ_ON_LIST(ep, e.rdm.ep_link)) {
-
-		ep->e.rdm.ep_fairness_credits = USDF_RDM_FAIRNESS_CREDITS;
-		TAILQ_INSERT_TAIL(&tx->t.rdm.tx_ep_ready, ep, e.rdm.ep_link);
-
-		/* Make sure TX is on domain ready list */
-		if (!TAILQ_ON_LIST(tx, tx_link)) {
-			TAILQ_INSERT_TAIL(&tx->tx_domain->dom_tx_ready,
-				tx, tx_link);
-		}
-	 }
+	/* Make sure TX is on domain ready list */
+	if (!TAILQ_ON_LIST(tx, tx_link)) {
+		TAILQ_INSERT_TAIL(&tx->tx_domain->dom_tx_ready,
+			tx, tx_link);
+	}
 }
 
 static inline void
@@ -229,7 +220,8 @@ usdf_rdm_send(struct fid_ep *fep, const void *buf, size_t len, void *desc,
 	TAILQ_REMOVE(&tx->t.rdm.tx_free_wqe, wqe, rd_link);
 
 	wqe->rd_context = context;
-	wqe->rd_dest = (struct usd_dest *)dest_addr;
+	wqe->r.tx.rd_dest = (struct usd_dest *)dest_addr;
+	wqe->rd_msg_id = atomic_inc(&tx->t.rdm.tx_next_msg_id);
 
 	wqe->rd_iov[0].iov_base = (void *)buf;
 	wqe->rd_iov[0].iov_len = len;
@@ -241,13 +233,19 @@ usdf_rdm_send(struct fid_ep *fep, const void *buf, size_t len, void *desc,
 	wqe->rd_resid = len;
 	wqe->rd_length = len;
 
-	/* add send to EP, and add EP to TX list if not present */
-	TAILQ_INSERT_TAIL(&ep->e.rdm.ep_posted_wqe, wqe, rd_link);
-	usdf_rdm_ep_ready(ep);
+	wqe->r.tx.rd_next_tx_seq = 0;
+
+	/* add send to TX list */
+	/* XXX maybe this should be on a list hung off of dest so
+	 * that we can do "fairness" - we need to be careful to maintain
+	 * message order to any given destination
+	 */
+	TAILQ_INSERT_TAIL(&tx->t.rdm.tx_wqe_ready, wqe, rd_link);
+	usdf_rdm_tx_ready(ep);
 
 	pthread_spin_unlock(&udp->dom_progress_lock);
 
-	usdf_progress_domain(udp);
+	usdf_domain_progress(udp);
 
 	return 0;
 }
@@ -286,18 +284,16 @@ usdf_rdm_recvmsg(struct fid_ep *ep, const struct fi_msg *msg, uint64_t flags)
 }
 
 static void
-usdf_rdm_send_complete(struct usdf_ep *ep, struct usdf_rdm_qe *wqe)
+usdf_rdm_send_complete(struct usdf_tx *tx, struct usdf_rdm_qe *wqe)
 {
-	TAILQ_REMOVE(&ep->e.rdm.ep_posted_wqe, wqe, rd_link);
+	TAILQ_REMOVE(&tx->t.rdm.ts_wqe_ready, wqe, rd_link);
 
-	wqe->rd_last_seq = ep->e.rdm.ep_next_tx_seq - 1;
-	TAILQ_INSERT_TAIL(&ep->e.rdm.ep_sent_wqe, wqe, rd_link);
+	TAILQ_INSERT_TAIL(&tx->t.rdm.tx_wqe_send, wqe, rd_link);
 }
 
 static inline void
-usdf_rdm_send_segment(struct usdf_tx *tx, struct usdf_ep *ep)
+usdf_rdm_send_segment(struct usdf_tx *tx, struct usdf_rdm_qe *wqe)
 {
-	struct usdf_rdm_qe *rdm;
 	struct rudp_pkt *hdr;
 	struct usd_wq *wq;
 	uint32_t index;
@@ -310,39 +306,34 @@ usdf_rdm_send_segment(struct usdf_tx *tx, struct usdf_ep *ep)
 	uint8_t *ptr;
 	struct usd_wq_post_info *info;
 
-	rdm = TAILQ_FIRST(&ep->e.rdm.ep_posted_wqe);
+	rdm = TAILQ_FIRST(&tx->t.rdm.tx_wqe_ready);
 	wq = &(to_qpi(tx->tx_qp)->uq_wq);
 
 	index = wq->uwq_post_index;
 	hdr = (struct rudp_pkt *)(wq->uwq_copybuf + index * USD_SEND_MAX_COPY);
 
-	memcpy(hdr, &rdm->rd_dest->ds_dest.ds_udp.u_hdr,
+	memcpy(hdr, &wqe->r.tx.rd_dest->ds_dest.ds_udp.u_hdr,
 			sizeof(struct usd_udp_hdr));
 
-	resid = rdm->rd_resid;
-	cur_iov = rdm->rd_cur_iov;
-	cur_ptr = rdm->rd_cur_ptr;
-	cur_resid = rdm->rd_iov_resid;
-
-	/* save first seq for message */
-	if (cur_iov == 0 && cur_resid == rdm->rd_iov[0].iov_len) {
-		rdm->rd_first_seq = ep->e.rdm.ep_next_tx_seq;
-	}
+	resid = wqe->rd_resid;
+	cur_iov = wqe->rd_cur_iov;
+	cur_ptr = wqe->rd_cur_ptr;
+	cur_resid = wqe->rd_iov_resid;
 
 	if (resid < USD_SEND_MAX_COPY - sizeof(*hdr)) {
-		hdr->msg.opcode = htons(RUDP_OP_LAST);
-		hdr->msg.m.rc_data.length = htons(resid);
-		hdr->msg.m.rc_data.seqno = htons(ep->e.rdm.ep_next_tx_seq);
-		++ep->e.rdm.ep_next_tx_seq;
+		hdr->p.rdm.opcode = htons(RUDP_OP_LAST);
+		hdr->p.rdm.r.rdm_data.length = htons(resid);
+		hdr->p.rdm.r.rdm_data.seqno = htons(wqe->r.tx.rd_tx_next_seq);
+		++wqe->r.tx.rd_tx_next_seq;
 
 		ptr = (uint8_t *)(hdr + 1);
 		while (resid > 0) {
 			memcpy(ptr, cur_ptr, cur_resid);
-			ptr += rdm->rd_iov_resid;
-			resid -= rdm->rd_iov_resid;
+			ptr += wqe->rd_iov_resid;
+			resid -= wqe->rd_iov_resid;
 			++cur_iov;
-			cur_ptr = rdm->rd_iov[cur_iov].iov_base;
-			cur_resid = rdm->rd_iov[cur_iov].iov_len;
+			cur_ptr = wqe->rd_iov[cur_iov].iov_base;
+			cur_resid = wqe->rd_iov[cur_iov].iov_len;
 		}
 
 		/* add packet lengths */
@@ -369,7 +360,7 @@ usdf_rdm_send_segment(struct usdf_tx *tx, struct usdf_ep *ep)
 
 		vwq = &wq->uwq_vnic_wq;
 		desc = wq->uwq_next_desc;
-		space = ep->ep_domain->dom_fabric->fab_dev_attrs->uda_mtu -
+		space = tx->tx_domain->dom_fabric->fab_dev_attrs->uda_mtu -
 			sizeof(*hdr);
 		num_sge = 1;
 
@@ -397,8 +388,8 @@ usdf_rdm_send_segment(struct usdf_tx *tx, struct usdf_ep *ep)
 					eop = 1;
 				}
 				++cur_iov;
-				cur_ptr = rdm->rd_iov[cur_iov].iov_base;
-				cur_resid = rdm->rd_iov[cur_iov].iov_len;
+				cur_ptr = wqe->rd_iov[cur_iov].iov_base;
+				cur_resid = wqe->rd_iov[cur_iov].iov_len;
 			}
 
 			wq_enet_desc_enc(desc, (uintptr_t)send_ptr, sge_len,
@@ -412,7 +403,7 @@ usdf_rdm_send_segment(struct usdf_tx *tx, struct usdf_ep *ep)
 		} while (space > 0 && num_sge <= USDF_RDM_MAX_SGE && resid > 0);
 
 		/* add packet lengths */
-		sent = ep->ep_domain->dom_fabric->fab_dev_attrs->uda_mtu -
+		sent = tx->tx_domain->dom_fabric->fab_dev_attrs->uda_mtu -
 			space;
 		hdr->ip.tot_len = htons(
 				sent + sizeof(struct rudp_pkt) -
@@ -424,7 +415,7 @@ usdf_rdm_send_segment(struct usdf_tx *tx, struct usdf_ep *ep)
 if (0) {
 if ((random() % 177) == 0 && resid == 0) {
 	hdr->eth.ether_type = 0;
-//printf("BORK seq %u\n", ep->e.rdm.ep_next_tx_seq);
+//printf("BORK seq %u\n", wqe->r.tx.rd_tx_next_seq);
 }
 }
 
@@ -434,8 +425,8 @@ if ((random() % 177) == 0 && resid == 0) {
 			hdr->msg.opcode = htons(RUDP_OP_FIRST);
 		}
 		hdr->msg.m.rc_data.length = htons(sent);
-		hdr->msg.m.rc_data.seqno = htons(ep->e.rdm.ep_next_tx_seq);
-		++ep->e.rdm.ep_next_tx_seq;
+		hdr->p.rdm.r.rdm_data.seqno = htons(wqe->r.tx.rd_tx_next_seq);
+		++wqe->r.tx.rd_tx_next_seq;
 					
 		wmb();
 		iowrite64(index, &vwq->ctrl->posted_index);
@@ -452,16 +443,16 @@ if ((random() % 177) == 0 && resid == 0) {
 
 	/* If send complete, remove from send list */
 	if (resid == 0) {
-		usdf_rdm_send_complete(ep, rdm);
+		usdf_rdm_send_complete(tx, rdm);
 	} else {
-		rdm->rd_resid = resid;
-		rdm->rd_iov_resid = cur_resid;
-		rdm->rd_cur_iov = cur_iov;
-		rdm->rd_cur_ptr = cur_ptr;
+		wqe->rd_resid = resid;
+		wqe->rd_iov_resid = cur_resid;
+		wqe->rd_cur_iov = cur_iov;
+		wqe->rd_cur_ptr = cur_ptr;
 	}
 
-	/* set ACK timer */
-	usdf_timer_set(ep->ep_domain->dom_fabric, ep->e.rdm.ep_ack_timer, 
+	/* set ack timer */
+	usdf_timer_set(tx->tx_domain->dom_fabric, tx->t.rdm.tx_ack_timer,
 			USDF_RUDP_ACK_TIMEOUT);
 }
 
@@ -528,89 +519,162 @@ usdf_rdm_send_completion(struct usd_completion *comp)
  * or
  * b) all endpoints are complete or blocked awaiting ACKs
  */
-static inline void
-usdf_rdm_progress_tx(struct usdf_tx *tx)
+void
+usdf_rdm_tx_progress(struct usdf_tx *tx)
 {
-	struct usdf_ep *ep;
+	struct usdf_wqe *wqe;
 	struct usd_qp_impl *qp;
 
 	qp = to_qpi(tx->tx_qp);
 	while (qp->uq_wq.uwq_send_credits > 1 &&
 			!TAILQ_EMPTY(&tx->t.rdm.tx_ep_have_acks)) {
-		ep = TAILQ_FIRST(&tx->t.rdm.tx_ep_have_acks);
-		TAILQ_REMOVE_MARK(&tx->t.rdm.tx_ep_have_acks,
-				ep, e.rdm.ep_ack_link);
+		wqe = TAILQ_FIRST(&tx->t.rdm.tx_qe_have_acks);
+		TAILQ_REMOVE_MARK(&tx->t.rdm.tx_qe_have_acks,
+				wqe, r.tx.rd_ack_link);
 
-		usdf_rdm_send_ack(tx, ep);
+		usdf_rdm_send_ack(tx, wqe);
 	}
 
 	while (qp->uq_wq.uwq_send_credits > 1 &&
-			!TAILQ_EMPTY(&tx->t.rdm.tx_ep_ready)) {
-		ep = TAILQ_FIRST(&tx->t.rdm.tx_ep_ready);
+			!TAILQ_EMPTY(&tx->t.rdm.tx_wqe_ready)) {
+		ep = TAILQ_FIRST(&tx->t.rdm.tx_wqe_ready);
 
 		/*
-		 * Send next segment on this EP. This will also remove the
-		 * current send from the EP send list if it completes
+		 * Send next segment on this WQE. This will also remove this
+		 * send from the TX ready list if it completes
 		 */
-		usdf_rdm_send_segment(tx, ep);
+		usdf_rdm_send_segment(tx, wqe);
 
-		--ep->e.rdm.ep_seq_credits;
-		if (TAILQ_EMPTY(&ep->e.rdm.ep_posted_wqe)) {
-			TAILQ_REMOVE_MARK(&tx->t.rdm.tx_ep_ready,
-					ep, e.rdm.ep_link);
-		} else {
-			--ep->e.rdm.ep_fairness_credits;
-			if (ep->e.rdm.ep_seq_credits == 0) {
-				TAILQ_REMOVE_MARK(&tx->t.rdm.tx_ep_ready,
-						ep, e.rdm.ep_link);
-				ep->e.rdm.ep_fairness_credits =
-					USDF_RDM_FAIRNESS_CREDITS;
-
-			/* fairness credits exhausted, go to back of the line */
-			} else if (ep->e.rdm.ep_fairness_credits == 0) {
-				TAILQ_REMOVE(&tx->t.rdm.tx_ep_ready,
-						ep, e.rdm.ep_link);
-				TAILQ_INSERT_TAIL(&tx->t.rdm.tx_ep_ready,
-						ep, e.rdm.ep_link);
-				ep->e.rdm.ep_fairness_credits =
-					USDF_RDM_FAIRNESS_CREDITS;
-			}
+		/* seq_credits should be per-dest XXX */
+		--tx->t.rdm.tx_seq_credits;
+		if (tx->t.rdm.tx_seq_credits == 0) {
+			return;
 		}
+	}
+}
+
+static inline uint16_t
+usdf_rdm_rqe_hash_helper(uint16_t *ipaddr, uint16_t port, uint16_t *msg_id)
+{
+	uint16_t hash_index;
+
+	hash_index = ipaddr[0];
+	hash_index ^= ipaddr[1];
+	hash_index ^= port;
+	hash_index ^= msg_id[0];
+	hash_index ^= msg_id[1];
+
+	return hash_index;
+}
+
+static inline uint16_t
+usdf_rdm_rqe_hash_rdm(struct usdf_rdm_qe *rqe)
+{
+	return usdf_rdm_rqe_hash_helper((uint16_t *)&rqe->r.rx.rd_ipaddr_be),
+	       rqe->r.rx.rd_port_be, rqe->rd_msg_id_be);
+}
+
+static inline uint16_t
+usdf_rdm_rqe_hash_pkt(struct rudp_pkt *pkt)
+{
+	return usdf_rdm_rqe_hash_helper((uint16_t *)&pkt->ip.saddr,
+			pkt->udp.source,
+			(uint16_t *)&pkt->p.rdm.msg_id);
+}
+
+static inline int
+usdf_rdm_rqe_pkt_match(struct usdf_rdm_qe *rqe, struct rudp_pkt *pkt)
+{
+	return pkt->ip.saddr == rqe->r.rx.rd_ipaddr_be &&
+	    pkt->udp.source == rqe->r.rx.rd_port_be &&
+	    pkt->p.rd.msg_id == rqe->rd_msg_id_be;
+}
+
+/*
+ * Find a matching WQE on this domain
+ */
+static inline struct usdf_rdm_qe *
+usdf_rdm_rqe_lookup(struct usdf_domain *udp, struct rudp_pkt *pkt)
+{
+	uint16_t hash_index;
+	struct usdf_rdm_qe *rqe;
+
+	hash_index = usdf_rdm_rqe_hash_pkt(pkt);
+
+	rqe = udp->dom_rqe_hashtab[hash_index];
+	while (rqe != NULL) {
+		if (usdf_rdm_rqe_pkt_match(rqe, pkt)) {
+			return rqe;
+		}
+		rqe = rqe->r.rx.rd_hash_next;
+	}
+
+	return NULL;
+}
+
+/*
+ * Insert rqe into domain hash table
+ */
+static inline void
+usdf_rdm_rqe_insert(struct usdf_domain *udp, struct usdf_rdm_qe *rqe)
+{
+	uint16_t hash_index;
+
+	hash_index = usdf_rdm_rqe_hash_rqe(rqe);
+
+	rqe->r.rx.rd_hash_next = udp->dom_rqe_hashtab[hash_index];
+	udp->dom_rqe_hashtab[hash_index] = rqe;
+}
+
+static inline void
+usdf_rdm_rqe_remove(struct usdf_domain *udp, struct usdf_rdm_qe *rqe)
+{
+	uint16_t hash_index;
+	hash_index = usdf_rdm_rqe_hash_rqe(rqe);
+
+	if (udp->dom_rqe_hashtab[hash_index] == rqe) {
+		udp->dom_rqe_hashtab[hash_index] = rqe->next;
+	} else {
+		prev = udp->dom_rqe_hashtab[hash_index];
+		while (prev->r.rx.rd_hash_next != rqe) {
+			prev = prev->r.rx.rd_hash_next;
+		}
+		prev->r.rx.rd_hash_next = prev->r.rx.rd_hash_next;
 	}
 }
 
 static void inline
-usdf_rdm_recv_complete(struct usdf_ep *ep, struct usdf_rdm_qe *rqe)
+usdf_rdm_recv_complete(struct usdf_rx *rx, struct usdf_rdm_qe *rqe)
 {
 	struct usdf_cq_hard *hcq;
 
-	hcq = ep->ep_rx->r.rdm.rx_hcq;
+	hcq = rx->r.rdm.rx_hcq;
 	hcq->cqh_post(hcq, rqe->rd_context, rqe->rd_length);
 
-	TAILQ_INSERT_HEAD(&ep->ep_rx->r.rdm.rx_free_rqe, rqe, rd_link);
+	usdf_rdm_rqe_remove(rx->rx_domain, rqe);
+	TAILQ_INSERT_HEAD(&rx->r.rdm.rx_free_rqe, rqe, rd_link);
 }
 
 static inline void
-usdf_rdm_ep_has_ack(struct usdf_ep *ep)
+usdf_rdm_wqe_has_ack(struct usdf_rdm_qe *wqe)
 {
 	struct usdf_tx *tx;
 	struct usdf_domain *udp;
 
-	if (!TAILQ_ON_LIST(ep, e.rdm.ep_ack_link)) {
-		tx = ep->ep_tx;
-		udp = ep->ep_domain;
-		TAILQ_INSERT_TAIL(&tx->t.rdm.tx_ep_have_acks, ep,
-				e.rdm.ep_ack_link);
+	if (!TAILQ_ON_LIST(wqe, r.tx.rd_ack_link)) {
+		tx = wqe->rd_tx;
+		udp = tx->tx_domain;
+		TAILQ_INSERT_TAIL(&tx->t.rdm.tx_wqe_have_acks, wqe,
+				r.tx.rd_ack_link);
 		/* Add TX to domain list if not present */
 		if (!TAILQ_ON_LIST(tx, tx_link)) {
 			TAILQ_INSERT_TAIL(&udp->dom_tx_ready, tx, tx_link);
 		}
-
 	}
 }
 
 static inline int
-usdf_rdm_check_seq(struct usdf_ep *ep, struct rudp_pkt *pkt)
+usdf_rdm_check_seq(struct usdf_rdm_qe *rqe, struct rudp_pkt *pkt)
 {
 	uint16_t seq;
 	int ret;
@@ -618,63 +682,64 @@ usdf_rdm_check_seq(struct usdf_ep *ep, struct rudp_pkt *pkt)
 	seq = ntohs(pkt->msg.m.rc_data.seqno);
 
 	/* Drop bad seq, send NAK if seq from the future */
-	if (seq != ep->e.rdm.ep_next_rx_seq) {
-		if (RUDP_SEQ_GT(seq, ep->e.rdm.ep_next_rx_seq)) {
-			ep->e.rdm.ep_send_nak = 1;
+	if (seq != rqe->r.rx.rd_next_rx_seq) {
+		if (RUDP_SEQ_GT(seq, rqe->r.rx.rd_next_rx_seq)) {
+			rqe->r.rx.rd_send_nak = 1;
 		}
 		ret = -1;
 	} else {
-		++ep->e.rdm.ep_next_rx_seq;
+		++rqe->r.rx.rd_next_rx_seq;
 		ret = 0;
 	}
-	usdf_rdm_ep_has_ack(ep);
+	usdf_rdm_rqe_has_ack(rqe);
 
 	return ret;
 }
 
 static inline void
-usdf_rdm_process_ack(struct usdf_ep *ep, uint16_t seq)
+usdf_rdm_process_ack(struct usdf_rdm_qe *rqe, uint16_t seq)
 {
 	struct usdf_cq_hard *hcq;
 	struct usdf_rdm_qe *wqe;
+	struct usdf_fabric *fp;
 	uint16_t max_ack;
 	unsigned credits;
 
 	/* don't try to ACK what we don't think we've sent */
-	max_ack = ep->e.rdm.ep_next_tx_seq - 1;
+	max_ack = rqe->r.rx.rd_next_tx_seq - 1;
 	if (RUDP_SEQ_GT(seq, max_ack)) {
 		seq = max_ack;
 	}
 
-	hcq = ep->ep_tx->t.rdm.tx_hcq;
-	while (!TAILQ_EMPTY(&ep->e.rdm.ep_sent_wqe)) {
-		wqe = TAILQ_FIRST(&ep->e.rdm.ep_sent_wqe);
+	hcq = rqe->ep_tx->t.rdm.tx_hcq;
+	while (!TAILQ_EMPTY(&rqe->r.rx.rd_sent_wqe)) {
+		wqe = TAILQ_FIRST(&rqe->r.rx.rd_sent_wqe);
 		if (RUDP_SEQ_LE(wqe->rd_last_seq, seq)) {
-			TAILQ_REMOVE(&ep->e.rdm.ep_sent_wqe, wqe, rd_link);
+			TAILQ_REMOVE(&rqe->r.rx.rd_sent_wqe, wqe, rd_link);
 			hcq->cqh_post(hcq, wqe->rd_context, wqe->rd_length);
 
-			TAILQ_INSERT_HEAD(&ep->ep_tx->t.rdm.tx_free_wqe,
+			TAILQ_INSERT_HEAD(&rqe->ep_tx->t.rdm.tx_free_wqe,
 					wqe, rd_link);
 		} else {
 			break;
 		}
 	}
 
-	credits = RUDP_SEQ_DIFF(seq, ep->e.rdm.ep_last_rx_ack);
-	if (ep->e.rdm.ep_seq_credits == 0 && credits > 0 &&
-			!TAILQ_EMPTY(&ep->e.rdm.ep_posted_wqe)) {
+	credits = RUDP_SEQ_DIFF(seq, rqe->r.rx.rd_last_rx_ack);
+	if (rqe->r.rx.rd_seq_credits == 0 && credits > 0 &&
+			!TAILQ_EMPTY(&rqe->r.rx.rd_posted_wqe)) {
 		usdf_rdm_ep_ready(ep);
 	}
-	ep->e.rdm.ep_seq_credits += credits;
-	ep->e.rdm.ep_last_rx_ack = seq;
+	rqe->r.rx.rd_seq_credits += credits;
+	rqe->r.rx.rd_last_rx_ack = seq;
 
 	/* If all ACKed, cancel timer, else reset it */
+	fp = rqe->rd_tx->tx_domain->dom_fabric;
 	if (seq == max_ack) {
-		usdf_timer_cancel(ep->ep_domain->dom_fabric,
-				ep->e.rdm.ep_ack_timer);
+		usdf_timer_cancel(fp, rqe->r.rx.rd_ack_timer);
 	} else {
-		usdf_timer_reset(ep->ep_domain->dom_fabric,
-			ep->e.rdm.ep_ack_timer, USDF_RUDP_ACK_TIMEOUT);
+		usdf_timer_reset(fp, rqe->r.rx.rd_ack_timer,
+				USDF_RUDP_ACK_TIMEOUT);
 	}
 }
 
@@ -764,10 +829,8 @@ usdf_rdm_handle_recv(struct usdf_domain *udp, struct usd_completion *comp)
 {
 	struct rudp_pkt *pkt;
 	struct usdf_rdm_qe *rqe;
-	struct usdf_ep *ep;
 	struct usd_qp *qp;
 	struct usdf_rx *rx;
-	uint32_t peer_id;
 	uint32_t opcode;
 	uint8_t *rx_ptr;
 	uint8_t *rqe_ptr;
@@ -777,33 +840,25 @@ usdf_rdm_handle_recv(struct usdf_domain *udp, struct usd_completion *comp)
 	size_t copylen;
 	int ret;
 
+	rx = qp->uq_context;
 	pkt = comp->uc_context;
 	opcode = ntohs(pkt->msg.opcode);
-	peer_id = ntohs(pkt->msg.src_peer_id);
-	if (peer_id > USDF_MAX_PEERS) {
-		qp = comp->uc_qp;
-		rx = qp->uq_context;
-		goto dropit;
-	}
-	ep = udp->dom_peer_tab[peer_id];
-	if (ep == NULL) {
-		qp = comp->uc_qp;
-		rx = qp->uq_context;
-		goto dropit;
-	}
-	rx = ep->ep_rx;
+
+	rqe = usdf_rdm_rqe_lookup(udp, pkt);
 
 	switch (opcode) {
 	case RUDP_OP_ACK:
-		usdf_rdm_rx_ack(ep, pkt);
+		usdf_rdm_rx_ack(rqe, pkt);
 		break;
 
 	case RUDP_OP_NAK:
-		usdf_rdm_rx_nak(ep, pkt);
+		usdf_rdm_rx_nak(rqe, pkt);
 		break;
 
 	case RUDP_OP_FIRST:
-		ret = usdf_rdm_check_seq(ep, pkt);
+		rqe = usdf_find_rqe(rx, pkt);
+
+		ret = usdf_rdm_check_seq(rqe, pkt);
 		if (ret == -1) {
 			goto dropit;
 		}
@@ -903,7 +958,7 @@ dropit:
  * Process message completions
  */
 void
-usdf_rdm_progress_hcq(struct usdf_cq_hard *hcq)
+usdf_rdm_hcq_progress(struct usdf_cq_hard *hcq)
 {
 	struct usd_completion comp;
 

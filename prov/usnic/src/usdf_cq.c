@@ -443,7 +443,7 @@ usdf_cq_read_common_soft(struct fid_cq *fcq, void *buf, size_t count,
 	}
 
 	/* progress... */
-	usdf_progress_domain(cq->cq_domain);
+	usdf_domain_progress(cq->cq_domain);
 
 	switch (format) {
 	case FI_CQ_FORMAT_CONTEXT:

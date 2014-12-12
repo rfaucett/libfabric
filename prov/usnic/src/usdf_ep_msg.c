@@ -358,7 +358,7 @@ usdf_ep_msg_find_cqh(struct usdf_cq *cq)
 	struct usdf_cq_hard *hcq;
 
 	TAILQ_FOREACH(hcq, &cq->c.soft.cq_list, cqh_link) {
-		if (hcq->cqh_progress == usdf_msg_progress_hcq) {
+		if (hcq->cqh_progress == usdf_msg_hcq_progress) {
 			return hcq;
 		}
 	}
@@ -412,7 +412,7 @@ usdf_ep_msg_bind_cq(struct usdf_ep *ep, struct usdf_cq *cq, uint64_t flags)
 		}
 		hcq->cqh_cq = cq;
 		atomic_init(&hcq->cqh_refcnt, 0);
-		hcq->cqh_progress = usdf_msg_progress_hcq;
+		hcq->cqh_progress = usdf_msg_hcq_progress;
 		switch (cq->cq_attr.format) {
 		default:
 		case FI_CQ_FORMAT_CONTEXT:
@@ -686,6 +686,7 @@ usdf_ep_msg_open(struct fid_domain *domain, struct fi_info *info,
 		tx->tx_fid.fid.fclass = FI_CLASS_TX_CTX;
 		atomic_init(&tx->tx_refcnt, 0);
 		tx->tx_domain = udp;
+		tx->tx_progress = usdf_msg_tx_progress;
 		atomic_inc(&udp->dom_refcnt);
 		if (info->tx_attr != NULL) {
 			ret = usdf_msg_fill_tx_attr(info->tx_attr);
@@ -698,7 +699,6 @@ usdf_ep_msg_open(struct fid_domain *domain, struct fi_info *info,
 		}
 		TAILQ_INIT(&tx->t.msg.tx_free_wqe);
 		TAILQ_INIT(&tx->t.msg.tx_ep_ready);
-		TAILQ_INIT(&tx->t.msg.tx_ep_blocked);
 		TAILQ_INIT(&tx->t.msg.tx_ep_have_acks);
 
 		ep->ep_tx = tx;

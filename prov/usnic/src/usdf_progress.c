@@ -136,9 +136,8 @@ usdf_fabric_progression_thread(void *v)
 /*
  * Progress operations in this domain
  */
-void usdf_msg_progress_tx(struct usdf_tx *tx);
 void
-usdf_progress_domain(struct usdf_domain *udp)
+usdf_domain_progress(struct usdf_domain *udp)
 {
 	struct usdf_tx *tx;
 	struct usdf_cq_hard *hcq;
@@ -154,8 +153,7 @@ usdf_progress_domain(struct usdf_domain *udp)
 		tx = TAILQ_FIRST(&udp->dom_tx_ready);
 		TAILQ_REMOVE_MARK(&udp->dom_tx_ready, tx, tx_link);
 
-		/* XXX switch to tx->tx_progress(tx) */
-		usdf_msg_progress_tx(tx);
+		tx->tx_progress(tx);
 	}
 
 	pthread_spin_unlock(&udp->dom_progress_lock);

@@ -93,11 +93,42 @@ struct rudp_msg {
     } __attribute__ ((__packed__)) m;
 } __attribute__ ((__packed__));
 
+
+struct rudp_rdm_data_msg {
+    u_int32_t offset;  /* 4 */
+    u_int16_t length;  /* 8 */
+    u_int16_t seqno;   /* 10 */
+} __attribute__ ((__packed__));
+
+struct rudp_rdm {
+    u_int16_t opcode;
+    u_int32_t msg_id;
+    union {
+        struct rudp_rdm_data_msg rdm_data;
+        struct {
+            u_int16_t dst_peer_id;
+        } connect_req;
+        struct {
+            u_int16_t dst_peer_id;
+        } connect_resp;
+        struct {
+            u_int16_t ack_seq;
+        } ack;
+        struct {
+            u_int16_t nak_seq;
+            u_int32_t seq_mask;
+        } nak;
+    } __attribute__ ((__packed__)) r;
+} __attribute__ ((__packed__));
+
 struct rudp_pkt {
     struct ether_header eth;
     struct iphdr ip;
     struct udphdr udp;
-    struct rudp_msg msg;
+    union {
+	    struct rudp_msg msg;
+	    struct rudp_rdm rdm;
+    } p;
 } __attribute__ ((__packed__));
 
 

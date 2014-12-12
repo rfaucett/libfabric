@@ -54,14 +54,12 @@
 
 struct usdf_rdm_qe {
 	void *rd_context;
-	struct usd_dest *rd_dest;
+	uint32_t rd_msg_id_be;
+	struct usdf_tx *rd_tx;
 
 	struct iovec rd_iov[USDF_RDM_MAX_SGE];
 	size_t rd_last_iov;
 	size_t rd_length;
-
-	uint16_t rd_first_seq;
-	uint16_t rd_last_seq;
 
 	size_t rd_cur_iov;
 	const uint8_t *rd_cur_ptr;
@@ -69,6 +67,21 @@ struct usdf_rdm_qe {
 	size_t rd_iov_resid;    /* amount remaining in current iov */
 
 	TAILQ_ENTRY(usdf_rdm_qe) rd_link;
+
+	union {
+		struct {
+			struct usd_dest *rd_dest;
+			uint16_t rd_next_tx_seq;
+			TAILQ_ENTRY(usdf_rdm_qe) rd_ack_link;
+		} tx;
+		struct {
+			uint32_t rd_ipaddr_be;
+			uint16_r rd_port_be;
+			uint16_t rd_next_rx_seq;
+
+			struct usdf_rdm_qe *rd_hash_link;
+		} rx;
+	}r;
 };
 
 int usdf_rdm_post_recv(struct usdf_rx *rx, void *buf, size_t len);
@@ -77,7 +90,8 @@ int usdf_rdm_fill_rx_attr(struct fi_rx_attr *rxattr);
 int usdf_cq_rdm_poll(struct usd_cq *ucq, struct usd_completion *comp);
 void usdf_rdm_ep_timeout(void *vep);
 
-void usdf_rdm_progress_hcq(struct usdf_cq_hard *hcq);
+void usdf_rdm_hcq_progress(struct usdf_cq_hard *hcq);
+void usdf_rdm_tx_progress(struct usdf_tx *tx);
 
 /* fi_ops_cm for RC */
 int usdf_cm_rdm_connect(struct fid_ep *ep, const void *addr,
