@@ -85,35 +85,37 @@ struct usdf_rdm_qe {
  * RDM connection state
  */
 enum {
-	USDF_DCS_DISCONNECTED,
+	USDF_DCS_UNCONNECTED,
 	USDF_DCS_CONNECTING,
 	USDF_DCS_CONNECTED
 };
 
 /*
- * We're only connectionless to the APP
+ * We're only connectionless to the app.
+ * This connection struct is used to manage messages in flight.
+ * Whilel "
  */
 struct usdf_rdm_connection {
+	atomic_t dc_refcnt;
+
+	struct usdf_tx *dc_tx;
 	struct usd_udp_hdr dc_hdr;
 	uint16_t dc_state;
+	struct usdf_timer *dt_timer;
+	
+	/* RX state */
+	struct usdf_rdm_qe *dc_cur_rqe;
+	uint16_t dc_send_nak;
 	uint16_t dc_next_rx_seq;
 
-	struct usdf_rdm_qe *dc_cur_rqe;
-
-	struct usdf_rdm_qe *dc_hash_link;
-};
-
-struct usdf_rdm_tx_dest {
-	struct usdf_dest *rt_dest;
-	struct usdf_tx *rt_tx;
+	/* TX state */
 	TAILQ_HEAD(,usd_rdm_qe) rt_wqe_posted;
 	size_t rt_fairness_credits;
 	size_t rt_seq_credits;
 
-	struct usdf_timer *rt_ack_timer;
-
-	TAILQ_ENTRY(usdf_rdm_tx_dest) rt_link;
-	struct usdf_rdm_tx_dest *rt_hash_next;
+	TAILQ_ENTRY(usdf_rdm_connection) dc_addr_link;
+	TAILQ_ENTRY(usdf_rdm_connection) dc_tx_link;
+	struct usdf_rdm_qe *dc_hash_next;
 };
 
 int usdf_rdm_post_recv(struct usdf_rx *rx, void *buf, size_t len);

@@ -41,13 +41,15 @@
 #define USDF_AV_MAX_ARPS 3
 #define USDF_AV_ARP_INTERVAL 1000
 
+struct usdf_rdm_connection;
+
 /*
  * libfabric version of dest
  */
 struct usdf_dest {
 	struct usd_dest ds_dest;
 
-	TAILQ_HEAD(,usdf_rdm_tx_dest) ds_rdm_tx_list;
+	TAILQ_HEAD(,usdf_rdm_connection) ds_rdm_rdc_list;
 };
 
 /* struct used to track async insert requests */

@@ -67,11 +67,11 @@
 #include "usdf_progress.h"
 
 static inline void
-usdf_rdm_txd_ready(struct usdf_rdm_tx_dest *txd, struct usdf_tx *tx)
+usdf_rdm_rdc_ready(struct usdf_rdm_connection *rdc, struct usdf_tx *tx)
 {
-	if (!TAILQ_ON_LIST(txd, rt_link)) {
-		txd->rt_fairness_credits = USDF_RDM_FAIRNESS_CREDITS;
-		 TAILQ_INSERT_TAIL(&tx->t.rdm.tx_txd_ready, txd, rt_link);
+	if (!TAILQ_ON_LIST(rdc, dc_link)) {
+		rdc->dc_fairness_credits = USDF_RDM_FAIRNESS_CREDITS;
+		TAILQ_INSERT_TAIL(&tx->t.rdm.tx_rdc_ready, rdc, dc_link);
 
 		/* Make sure TX is on domain ready list */
 		if (!TAILQ_ON_LIST(tx, tx_link)) {
@@ -82,7 +82,7 @@ usdf_rdm_txd_ready(struct usdf_rdm_tx_dest *txd, struct usdf_tx *tx)
 }
 
 static inline uint16_t
-usdf_rdm_txd_hash_helper(uint16_t *ipaddr, uint16_t port)
+usdf_rdm_rdc_hash_helper(uint16_t *ipaddr, uint16_t port)
 {
 	uint16_t hash_index;
 
@@ -94,116 +94,119 @@ usdf_rdm_txd_hash_helper(uint16_t *ipaddr, uint16_t port)
 }
 
 static inline uint16_t
-usdf_rdm_txd_hash_txd(struct usdf_rdm_qe *txd)
+usdf_rdm_rdc_hash_hdr(struct rudp_pkt *pkt)
 {
-	struct usd_udp_hdr *hdr;
-
-	hdr = &txd->rt_dest->ds_dest.de_dest.ds_udp.u_hdr;
-
-	return usdf_rdm_txd_hash_helper((uint16_t *)&hdr->uh_ip.daddr,
-	       hdr->ud_udp.dest);
-}
-
-static inline uint16_t
-usdf_rdm_txd_hash_pkt(struct rudp_pkt *pkt)
-{
-	return usdf_rdm_txd_hash_helper((uint16_t *)&pkt->ip.saddr,
+	return usdf_rdm_rdc_hash_helper((uint16_t *)&pkt->ip.saddr,
 			pkt->udp.source);
 }
 
 static inline int
-usdf_rdm_txd_pkt_match(struct usdf_rdm_qe *txd, struct rudp_pkt *pkt)
+usdf_rdm_rdc_pkt_match(struct usdf_rdm_connection *rdc, struct rudp_pkt *pkt)
 {
-	struct usd_udp_hdr *hdr;
-
-	hdr = &txd->rt_dest->ds_dest.de_dest.ds_udp.u_hdr;
-
-	return pkt->ip.saddr == hdr->uh_ip.daddr &&
-	    pkt->udp.source == hdr->ud_udp.dest;
+	return pkt->ip.saddr == rdc->dc_hdr.uh_ip.daddr &&
+	    pkt->udp.source == rdc->dc_hdr.ud_udp.dest;
 }
 
 /*
- * Find a matching WQE on this domain
+ * Find a matching RDM connection on this domain
  */
-static inline struct usdf_rdm_qe *
-usdf_rdm_txd_lookup(struct usdf_domain *udp, struct rudp_pkt *pkt)
+static inline struct usdf_rdm_connection *
+usdf_rdm_rdc_pkt_lookup(struct usdf_domain *udp, struct rudp_pkt *pkt)
 {
 	uint16_t hash_index;
-	struct usdf_rdm_qe *txd;
+	struct usdf_rdm_connection *rdc;
 
-	hash_index = usdf_rdm_txd_hash_pkt(pkt);
+	hash_index = usdf_rdm_rdc_hash_hdr(pkt);
 
-	txd = udp->dom_txd_hashtab[hash_index];
-	while (txd != NULL) {
-		if (usdf_rdm_txd_pkt_match(txd, pkt)) {
-			return txd;
+	rdc = udp->dom_rdc_hashtab[hash_index];
+	while (rdc != NULL) {
+		if (usdf_rdm_rdc_pkt_match(rdc, pkt)) {
+			return rdc;
 		}
-		txd = txd->rt_hash_next;
+		rdc = rdc->dc_hash_next;
 	}
 
 	return NULL;
 }
 
 /*
- * Insert txd into domain hash table
+ * Insert rdc into domain hash table
  */
 static inline void
-usdf_rdm_txd_insert(struct usdf_domain *udp, struct usdf_rdm_qe *txd)
+usdf_rdm_rdc_insert(struct usdf_domain *udp, struct usdf_rdm_connection *rdc)
 {
 	uint16_t hash_index;
 
-	hash_index = usdf_rdm_txd_hash_txd(txd);
+	hash_index = usdf_rdm_rdc_hash_hdr(rdc);
 
-	txd->rt_hash_next = udp->dom_txd_hashtab[hash_index];
-	udp->dom_txd_hashtab[hash_index] = txd;
+	rdc->dc_hash_next = udp->dom_rdc_hashtab[hash_index];
+	udp->dom_rdc_hashtab[hash_index] = rdc;
 }
 
 static inline void
-usdf_rdm_txd_remove(struct usdf_domain *udp, struct usdf_rdm_qe *txd)
+usdf_rdm_rdc_remove(struct usdf_domain *udp, struct usdf_rdm_connection *rdc)
 {
 	uint16_t hash_index;
-	struct usdf_rdm_qe *txd *prev;
+	struct usdf_rdm_connection *prev;
 
-	hash_index = usdf_rdm_txd_hash_txd(txd);
+	hash_index = usdf_rdm_rdc_hash_hdr(&rdc->dc_hdr);
 
-	if (udp->dom_txd_hashtab[hash_index] == txd) {
-		udp->dom_txd_hashtab[hash_index] = txd->rt_hash_next;
+	if (udp->dom_rdc_hashtab[hash_index] == rdc) {
+		udp->dom_rdc_hashtab[hash_index] = rdc->dc_hash_next;
 	} else {
-		prev = udp->dom_txd_hashtab[hash_index];
-		while (prev->rt_hash_next != txd) {
-			prev = prev->rt_hash_next;
+		prev = udp->dom_rdc_hashtab[hash_index];
+		while (prev->dc_hash_next != rdc) {
+			prev = prev->dc_hash_next;
 		}
-		prev->rt_hash_next = txd->rt_hash_next;
+		prev->dc_hash_next = rdc->dc_hash_next;
 	}
 }
 
-static inline struct usdf_rdm_tx_dest *
-usdf_rdm_txd_get(struct usdf_dest *dest, struct usdf_tx *tx)
+/*
+ * Get an RDM connection for this send.  If there is a connection for this
+ * TX queue already attached to this destination, use that.
+ * If not, check to see if one if in the connection cache (possibly put
+ * there by receive).  If there is not one there either, grab a new one
+ * and put it in the cache and also attch to this dest.
+ */
+static inline struct usdf_rdm_connection *
+usdf_rdm_rdc_get(struct usdf_dest *dest, struct usdf_tx *tx)
 {
-	struct usdf_rdm_tx_dest *txd;
+	struct usdf_rdm_connection *rdc;
+	struct usdf_domain *udp;
 
-	TAILQ_FOREACH(txd, &dest->ds_rdm_tx_list, rt_link) {
-		if (txd->rt_tx == tx) {
-			return txd;
+	TAILQ_FOREACH(rdc, &dest->ds_rdm_rdc_list, dc_addr_link) {
+		if (rdc->dc_tx == tx) {
+			return rdc;
 		}
 	}
-	if (TAILQ_EMPTY(&tx->t.rdm.tx_txd_free)) {
-		return NULL;
-	} else { 
-		/* XXX painful to do each (new) send! */
-		/* We can start a timer that says "if no activity within 
-		 * X time, return to free list."  If free list is found empty,
-		 * we can harvest empty txds...
-		 */
-		txd = TAILQ_FIRST(&tx->t.rdm.tx_txd_free);
-		TAILQ_REMOVE(&tx->t.rdm.tx_txd_free, txd, rt_link);
-		TAILQ_ADD(&dest->ds_rdm_tx_list, txd, rt_link);
-		txd->rt_dest = dest;
-		usdf_rdm_txd_insert(tx->tx_domain, txd);
-		return txd;
+
+	udp = tx->tx_domain;
+	rdc = usdf_rdm_rdc_pkt_lookup(udp,
+			&dest->ds_dest.ds_dest.ds_udp.u_hdr);
+	if (rdc == NULL) {
+		if (TAILQ_EMPTY(&udp->dom_rdc_free)) {
+			return NULL;	// XXX alloc a new batch
+		} else {
+			rdc = TAILQ_FIRST(&tx->t.rdm.tx_rdc_free);
+			TAILQ_REMOVE(&udp->dom_rdc_free, rdc, dc_addr_link);
+
+			usdf_rdm_rdc_insert(udp, rdc);
+			/// XXX start eviction timer
+		}
 	}
+
+	/* Add to list for this dest */
+	TAILQ_ADD(&dest->ds_rdm_rdc_list, rdc, dc_addr_link);
+	rdc->dc_dest = dest;
+	rdc->dc_tx = tx;
+
+	return rdc;
 }
 
+/*
+ * Rewind a queue entry by "rewind" packets
+ */
 static inline void
 usdf_rdm_rewind_qe(struct usdf_rdm_qe *qe, size_t rewind, size_t mtu)
 {
@@ -372,7 +375,7 @@ usdf_rdm_send(struct fid_ep *fep, const void *buf, size_t len, void *desc,
 	wqe->r.tx.rd_next_tx_seq = 0;
 
 	/* add send to TX list */
-	TAILQ_INSERT_TAIL(&txd->rt_wqe_posted, wqe, rd_link);
+	TAILQ_INSERT_TAIL(&txd->dc_wqe_posted, wqe, rd_link);
 	usdf_rdm_txd_ready(txd);
 
 	pthread_spin_unlock(&udp->dom_progress_lock);
@@ -419,13 +422,13 @@ usdf_rdm_recvmsg(struct fid_ep *ep, const struct fi_msg *msg, uint64_t flags)
  * All segments send, stall this TXD until message completely ACKed
  */
 static inline void
-usdf_rdm_send_sent(struct usdf_tx *tx, struct usdf_rdm_tx_dest *txd)
+usdf_rdm_send_sent(struct usdf_tx *tx, struct usdf_rdm_connection *txd)
 {
-	TAILQ_REMOVE_MARK(&tx->t.rdm.tx_txd_ready, txd, rt_link);
+	TAILQ_REMOVE_MARK(&tx->t.rdm.tx_txd_ready, txd, dc_link);
 }
 
 static inline void
-usdf_rdm_send_segment(struct usdf_tx *tx, struct usdf_rdm_tx_dest *txd)
+usdf_rdm_send_segment(struct usdf_tx *tx, struct usdf_rdm_connection *txd)
 {
 	struct rudp_pkt *hdr;
 	struct usdf_rdm_qe *wqe;
@@ -441,9 +444,9 @@ usdf_rdm_send_segment(struct usdf_tx *tx, struct usdf_rdm_tx_dest *txd)
 	uint8_t *ptr;
 	struct usd_wq_post_info *info;
 
-	wqe = TAILQ_FIRST(&txd->rt_wqe_posted);
+	wqe = TAILQ_FIRST(&txd->dc_wqe_posted);
 	wq = &(to_qpi(tx->tx_qp)->uq_wq);
-	udest = &txd->rt_dest.ds_dest;
+	udest = &txd->dc_dest.ds_dest;
 
 	index = wq->uwq_post_index;
 	hdr = (struct rudp_pkt *)(wq->uwq_copybuf + index * USD_SEND_MAX_COPY);
@@ -588,7 +591,7 @@ if ((random() % 177) == 0 && resid == 0) {
 	}
 
 	/* set ack timer */
-	usdf_timer_set(tx->tx_domain->dom_fabric, txd->rt_ack_timer,
+	usdf_timer_set(tx->tx_domain->dom_fabric, txd->dc_ack_timer,
 			USDF_RUDP_ACK_TIMEOUT);
 }
 
@@ -683,25 +686,25 @@ usdf_rdm_tx_progress(struct usdf_tx *tx)
 		 */
 		usdf_rdm_send_segment(tx, txd);
 
-		--txd->rt_seq_credits;
-		if (TAILQ_EMPTY(&txd->rt_wqe_posted)) {
+		--txd->dc_seq_credits;
+		if (TAILQ_EMPTY(&txd->dc_wqe_posted)) {
 			TAILQ_REMOVE_MARK(&tx->t.msg.tx_txd_ready,
-					txd, rt_link);
+					txd, dc_link);
 		} else {
-			--txd->rt_fairness_credits;
-			if (txd->rt_seq_credits == 0) {
+			--txd->dc_fairness_credits;
+			if (txd->dc_seq_credits == 0) {
 				TAILQ_REMOVE_MARK(&tx->t.msg.tx_txd_ready,
-					txd, rt_link);
-				txd->rt_fairness_credits =
+					txd, dc_link);
+				txd->dc_fairness_credits =
 					USDF_rdm_FAIRNESS_CREDITS;
 
 			/* fairness credits exhausted, go to back of the line */
-			} else if (txd->rt_fairness_credits == 0) {
+			} else if (txd->dc_fairness_credits == 0) {
 				TAILQ_REMOVE(&tx->t.msg.tx_txd_ready,
-					txd, rt_link);
+					txd, dc_link);
 				TAILQ_INSERT_TAIL(&tx->t.msg.tx_txd_ready,
-					txd, rt_link);
-				txd->rt_fairness_credits =
+					txd, dc_link);
+				txd->dc_fairness_credits =
 					USDF_rdm_FAIRNESS_CREDITS;
 			}
 		}
@@ -903,17 +906,17 @@ usdf_rdm_process_ack(struct usdf_rdm_qe *wqe, uint16_t seq)
 }
 
 static inline void
-usdf_rdm_process_nak(struct usdf_rdm_tx_dest *txd, uint16_t seq)
+usdf_rdm_process_nak(struct usdf_rdm_connection *txd, uint16_t seq)
 {
 	struct usdf_rdm_qe *wqe;
 	struct usdf_fabric *fp;
 	size_t rewind;
 
-	if (TAILQ_EMPTY(&txd->rt_wqe_posted)) {
+	if (TAILQ_EMPTY(&txd->dc_wqe_posted)) {
 		return;
 	}
 
-	wqe = TAILQ_FIRST(&txd->rt_wqe_posted);
+	wqe = TAILQ_FIRST(&txd->dc_wqe_posted);
 
 	/* Ignore NAKs of future packets */
 	if (RUDP_SEQ_GE(seq, wqe->r.tx.rd_next_rx_seq)) {
@@ -923,10 +926,10 @@ usdf_rdm_process_nak(struct usdf_rdm_tx_dest *txd, uint16_t seq)
 	/* reset WQE to old sequence # */
 	rewind = RUDP_SEQ_DIFF(wqe->r.tx.rd_next_tx_seq, seq);
 	if (rewind > 0) {
-		txd->rt_seq_credits = USDF_RUDP_SEQ_CREDITS;
+		txd->dc_seq_credits = USDF_RUDP_SEQ_CREDITS;
 		wqe->r.tx.rd_next_tx_seq = seq;
 
-		fp = txd->rt_tx->tx_domain->dom_fabric;
+		fp = txd->dc_tx->tx_domain->dom_fabric;
 		usdf_rdm_rewind_qe(wqe, rewind,
 			fp->fab_dev_attrs->uda_mtu - sizeof(struct rudp_pkt));
 
@@ -937,19 +940,19 @@ usdf_rdm_process_nak(struct usdf_rdm_tx_dest *txd, uint16_t seq)
 void
 usdf_rdm_txd_timeout(void *vtxd)
 {
-	struct usdf_rdm_tx_dest *txd;
+	struct usdf_rdm_connection *txd;
 	struct usdf_rdm_qe *wqe;
 	struct usdf_domain *udp;
 	uint16_t nak;
 
 	txd = vtxd;
-	udp = txd->rt_tx->tx_domain;
+	udp = txd->dc_tx->tx_domain;
 
 	pthread_spin_lock(&udp->dom_progress_lock);
-	if (TAILQ_EMPTY(&txd->rt_wqe_posted)) {
+	if (TAILQ_EMPTY(&txd->dc_wqe_posted)) {
 		goto done;
 	}
-	wqe = TAILQ_FIRST(&txd->rt_wqe_posted);
+	wqe = TAILQ_FIRST(&txd->dc_wqe_posted);
 	nak = wqe->r.tx.rd_last_rx_ack + 1;
 
 	usdf_rdm_process_nak(txd, nak);
@@ -961,7 +964,7 @@ static inline void
 usdf_rdm_rx_ack(struct usdf_rx *rx, struct rudp_pkt *pkt)
 {
 	uint16_t seq;
-	struct usdf_rdm_tx_dest *txd;
+	struct usdf_rdm_connection *txd;
 
 	txd = usdf_rdm_txd_lookup(rx->rx_domain, pkt);
 	seq = ntohs(pkt->p.rdm.r.nak.nak_seq);
@@ -972,7 +975,7 @@ static inline void
 usdf_rdm_rx_nak(struct usdf_rx *rx, struct rudp_pkt *pkt)
 {
 	uint16_t seq;
-	struct usdf_rdm_tx_dest *txd;
+	struct usdf_rdm_connection *txd;
 
 	txd = usdf_rdm_txd_lookup(rx->rx_domain, pkt);
 	seq = ntohs(pkt->p.rdm.r.nak.nak_seq);
