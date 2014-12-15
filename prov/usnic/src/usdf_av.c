@@ -123,7 +123,7 @@ usdf_av_alloc_dest(struct usdf_dest **dest_o)
 {
 	struct usdf_dest *dest;
 
-	dest = calloc(1, sizeof(*dest_o));
+	dest = calloc(1, sizeof(**dest_o));
 	if (dest == NULL) {
 		return -errno;
 	}

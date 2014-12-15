@@ -472,3 +472,40 @@ usdf_cq_msg_poll(struct usd_cq *ucq, struct usd_completion *comp)
 {
 	return -EAGAIN;
 }
+
+/*
+ * Return local address of an EP
+ */
+int usdf_cm_rdm_getname(fid_t fid, void *addr, size_t *addrlen)
+{
+	struct usdf_ep *ep;
+	struct usdf_rx *rx;
+	struct sockaddr_in sin;
+	size_t copylen;
+
+	ep = ep_fidtou(fid);
+	rx = ep->ep_rx;
+
+	copylen = sizeof(sin);
+	if (copylen > *addrlen) {
+		copylen = *addrlen;
+	}
+	*addrlen = sizeof(sin);
+
+	memset(&sin, 0, sizeof(sin));
+	sin.sin_family = AF_INET;
+	sin.sin_addr.s_addr =
+		ep->ep_domain->dom_fabric->fab_dev_attrs->uda_ipaddr_be;
+	if (rx == NULL || rx->rx_qp == NULL) {
+		sin.sin_port = 0;
+	} else {
+		sin.sin_port = to_qpi(rx->rx_qp)->uq_attrs.uqa_local_addr.ul_addr.ul_udp.u_addr.sin_port;
+	}
+	memcpy(addr, &sin, copylen);
+
+	if (copylen < sizeof(sin)) {
+		return -FI_ETOOSMALL;
+	} else {
+		return 0;
+	}
+}

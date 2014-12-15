@@ -494,7 +494,6 @@ usdf_fill_info_rdm(
 	}
 	fi->ep_type = FI_EP_RDM;
 
-
 	ret = usdf_fill_addr_info(fi, addr_format, src, dest, dap);
 	if (ret != 0) {
 		goto fail;
@@ -659,6 +658,7 @@ usdf_getinfo(uint32_t version, const char *node, const char *service,
 		}
 		if (flags & FI_SOURCE) {
 			src = (struct sockaddr_in *)ai->ai_addr;
+printf("FI_SOURCE: port = %d\n", htons(src->sin_port));
 		} else {
 			dest = (struct sockaddr_in *)ai->ai_addr;
 		}

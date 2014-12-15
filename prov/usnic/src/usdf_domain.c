@@ -121,6 +121,9 @@ usdf_dom_rdc_alloc_data(struct usdf_domain *udp)
 			free(rdc);
 			return ret;
 		}
+		rdc->dc_next_rx_seq = 0;
+		TAILQ_INIT(&rdc->dc_wqe_posted);
+		TAILQ_INIT(&rdc->dc_wqe_sent);
 		SLIST_INSERT_HEAD(&udp->dom_rdc_free, rdc, dc_addr_link);
 	}
 	return 0;
@@ -266,6 +269,7 @@ usdf_domain_open(struct fid_fabric *fabric, struct fi_info *info,
 	if (ret != 0) {
 		goto fail;
 	}
+printf("opened domain for %s\n", info->fabric_attr->name);
 
 	udp->dom_fabric = fp;
 	LIST_INSERT_HEAD(&fp->fab_domain_list, udp, dom_link);

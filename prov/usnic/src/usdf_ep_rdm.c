@@ -63,6 +63,7 @@
 #include "usdf_endpoint.h"
 #include "usdf_rudp.h"
 #include "usdf_cq.h"
+#include "usdf_cm.h"
 #include "usdf_av.h"
 #include "usdf_timer.h"
 #include "usdf_rdm.h"
@@ -152,8 +153,8 @@ usdf_rx_rdm_enable(struct usdf_rx *rx)
 	}
 
 	/* XXX temp until we can allocate WQ and RQ independently */
-	filt.uf_type = USD_FTY_UDP;
-	filt.uf_filter.uf_udp.u_port = 0;
+	filt.uf_type = USD_FTY_UDP_SOCK;
+	filt.uf_filter.uf_udp_sock.u_sock = rx->r.rdm.rx_sock;
 	ret = usd_create_qp(udp->dom_dev,
 			USD_QTR_UDP,
 			USD_QTY_NORMAL,
@@ -504,6 +505,9 @@ usdf_rdm_rx_ctx_close(fid_t fid)
 		atomic_dec(&hcq->cqh_refcnt);
 		atomic_dec(&hcq->cqh_cq->cq_refcnt);
 	}
+	if (rx->r.rdm.rx_sock != -1) {
+		close(rx->r.rdm.rx_sock);
+	}
 
 	if (rx->rx_qp != NULL) {
 		usd_free_mr(rx->r.rdm.rx_bufs);
@@ -542,6 +546,46 @@ usdf_rdm_tx_ctx_close(fid_t fid)
 	atomic_dec(&tx->tx_domain->dom_refcnt);
 
 	free(tx);
+
+	return 0;
+}
+
+int
+usdf_rx_rdm_port_bind(struct usdf_rx *rx, struct fi_info *info)
+{
+	struct sockaddr_in *sin;
+	struct sockaddr_in src;
+	socklen_t addrlen;
+	int ret;
+
+	if (info->src_addr != NULL) {
+		if (info->addr_format != FI_SOCKADDR &&
+		    info->addr_format != FI_SOCKADDR_IN) {
+			return -FI_EINVAL;
+		}
+		sin = (struct sockaddr_in *)info->src_addr;
+	} else {
+		memset(&src, 0, sizeof(src));
+		sin = &src;
+		sin->sin_family = AF_INET;
+		sin->sin_addr.s_addr =
+			rx->rx_domain->dom_fabric->fab_dev_attrs->uda_ipaddr_be;
+	}
+		
+	rx->r.rdm.rx_sock = socket(AF_INET, SOCK_DGRAM, 0);
+	if (rx->r.rdm.rx_sock == -1) {
+		return -errno;
+	}
+	ret = bind(rx->r.rdm.rx_sock, (struct sockaddr *)sin, sizeof(*sin));
+	if (ret == -1) {
+		return -errno;
+	}
+
+	addrlen = sizeof(*sin);
+	ret = getsockname(rx->r.rdm.rx_sock, (struct sockaddr *)sin, &addrlen);
+	if (ret == -1) {
+		 return -errno;
+	}
 
 	return 0;
 }
@@ -592,7 +636,7 @@ static struct fi_ops_ep usdf_base_rdm_ops = {
 
 static struct fi_ops_cm usdf_cm_rdm_ops = {
 	.size = sizeof(struct fi_ops_cm),
-	.getname = fi_no_getname,
+	.getname = usdf_cm_rdm_getname,
 	.getpeer = fi_no_getpeer,
 	.connect = fi_no_connect,
 	.listen = fi_no_listen,
@@ -713,11 +757,19 @@ usdf_ep_rdm_open(struct fid_domain *domain, struct fi_info *info,
 			ret = -errno;
 			goto fail;
 		}
+
 		rx->rx_fid.fid.fclass = FI_CLASS_RX_CTX;
 		atomic_init(&rx->rx_refcnt, 0);
 		rx->rx_domain = udp;
 		rx->r.rdm.rx_tx = tx;
+		rx->r.rdm.rx_sock = -1;
 		atomic_inc(&udp->dom_refcnt);
+
+		ret = usdf_rx_rdm_port_bind(rx, info);
+		if (ret != 0) {
+			goto fail;
+		}
+
 		if (info->rx_attr != NULL) {
 			ret = usdf_rdm_fill_rx_attr(info->rx_attr);
 			if (ret != 0) {
@@ -741,6 +793,9 @@ usdf_ep_rdm_open(struct fid_domain *domain, struct fi_info *info,
 	return 0;
 fail:
 	if (rx != NULL) {
+		if (rx->r.rdm.rx_sock != -1) {
+			close(rx->r.rdm.rx_sock);
+		}
 		free(rx);
 		atomic_dec(&udp->dom_refcnt);
 	}

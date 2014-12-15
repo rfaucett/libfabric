@@ -184,8 +184,6 @@ struct usdf_tx {
 			TAILQ_HEAD(,usdf_rdm_qe) tx_free_wqe;
 			TAILQ_HEAD(,usdf_rdm_connection) tx_rdc_ready;
 			TAILQ_HEAD(,usdf_rdm_connection) tx_rdc_have_acks;
-
-			struct usdf_timer *tx_ack_timer;
 		} rdm;
 	} t;
 };
@@ -212,6 +210,7 @@ struct usdf_rx {
 			TAILQ_HEAD(,usdf_msg_qe) rx_posted_rqe;
 		} msg;
 		struct {
+			int rx_sock;
 			struct usdf_cq_hard *rx_hcq;
 			struct usdf_tx *rx_tx;
 
