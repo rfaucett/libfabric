@@ -57,11 +57,12 @@
 #include <rdma/fi_errno.h>
 #include "fi.h"
 
-#include "usnic_direct.h"
 #include "usd.h"
 #include "usd_post.h"
+
 #include "usdf.h"
 #include "usdf_dgram.h"
+#include "usdf_av.h"
 
 ssize_t
 usdf_dgram_recv(struct fid_ep *fep, void *buf, size_t len,
@@ -128,11 +129,11 @@ _usdf_dgram_send(struct usdf_ep *ep, struct usdf_dest *dest,
 		const void *buf, size_t len,  void *context)
 {
 	if (len <= USD_SEND_MAX_COPY - sizeof(struct usd_udp_hdr)) {
-		return usd_post_send_one_copy(ep->e.dg.ep_qp, &dest->ds_dest,
-			buf, len, USD_SF_SIGNAL, context);
+		return usd_post_send_one_copy(ep->e.dg.ep_qp,
+			&dest->ds_dest, buf, len, USD_SF_SIGNAL, context);
 	} else {
-		return usd_post_send_one(ep->e.dg.ep_qp, &dest->ds_dest, buf, len,
-			USD_SF_SIGNAL, context);
+		return usd_post_send_one(ep->e.dg.ep_qp, &dest->ds_dest,
+			buf, len, USD_SF_SIGNAL, context);
 	}
 }
 

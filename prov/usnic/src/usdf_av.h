@@ -49,7 +49,7 @@ struct usdf_rdm_connection;
 struct usdf_dest {
 	struct usd_dest ds_dest;
 
-	TAILQ_HEAD(,usdf_rdm_connection) ds_rdm_rdc_list;
+	SLIST_HEAD(,usdf_rdm_connection) ds_rdm_rdc_list;
 };
 
 /* struct used to track async insert requests */

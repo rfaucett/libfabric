@@ -62,6 +62,7 @@
 #include "usdf_endpoint.h"
 #include "usdf_dgram.h"
 #include "usdf_msg.h"
+#include "usdf_av.h"
 #include "usdf_cm.h"
 
 static void
@@ -153,7 +154,8 @@ usdf_cm_msg_accept(struct fid_ep *fep, const void *param, size_t paramlen)
 
 	/* start creating the dest early */
 	ret = usd_create_dest_with_mac(udp->dom_dev, reqp->creq_ipaddr,
-			reqp->creq_port, reqp->creq_mac, &ep->e.msg.ep_dest);
+			reqp->creq_port, reqp->creq_mac,
+			&ep->e.msg.ep_dest);
 	if (ret != 0) {
 		goto fail;
 	}

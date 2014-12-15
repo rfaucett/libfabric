@@ -48,6 +48,9 @@
 
 #define USDF_RDM_MAX_MSG UINT_MAX
 
+#define USDF_RDM_FREE_BLOCK (16 * 1024)
+#define USDF_RDM_HASH_SIZE (64 * 1024)
+#define USDF_RDM_HASH_MASK (USDF_RDM_HASH_SIZE - 1)
 #define USDF_RDM_FAIRNESS_CREDITS 16
 
 #define USDF_RDM_RUDP_SEQ_CREDITS 256
@@ -68,17 +71,7 @@ struct usdf_rdm_qe {
 
 	TAILQ_ENTRY(usdf_rdm_qe) rd_link;
 
-	union {
-		struct {
-			struct usdf_dest *rd_dest;
-			uint16_t rd_next_tx_seq;
-			uint16_t rd_last_rx_ack;
-			TAILQ_ENTRY(usdf_rdm_qe) rd_ack_link;
-		} tx;
-		struct {
-			struct usdf_rdm_connection *rd_conn;
-		} rx;
-	} r;
+	struct usdf_rdm_connection *rd_conn;
 };
 
 /*
@@ -93,7 +86,6 @@ enum {
 /*
  * We're only connectionless to the app.
  * This connection struct is used to manage messages in flight.
- * Whilel "
  */
 struct usdf_rdm_connection {
 	atomic_t dc_refcnt;
@@ -101,28 +93,32 @@ struct usdf_rdm_connection {
 	struct usdf_tx *dc_tx;
 	struct usd_udp_hdr dc_hdr;
 	uint16_t dc_state;
-	struct usdf_timer *dt_timer;
+	struct usdf_timer_entry *dc_timer;
 	
 	/* RX state */
 	struct usdf_rdm_qe *dc_cur_rqe;
 	uint16_t dc_send_nak;
 	uint16_t dc_next_rx_seq;
+	TAILQ_ENTRY(usdf_rdm_connection) dc_ack_link;
 
 	/* TX state */
-	TAILQ_HEAD(,usd_rdm_qe) rt_wqe_posted;
-	size_t rt_fairness_credits;
-	size_t rt_seq_credits;
-
-	TAILQ_ENTRY(usdf_rdm_connection) dc_addr_link;
+	TAILQ_HEAD(,usdf_rdm_qe) dc_wqe_posted;
+	TAILQ_HEAD(,usdf_rdm_qe) dc_wqe_sent;
+	uint16_t dc_next_tx_seq;
+	uint16_t dc_last_rx_ack;
+	size_t dc_fairness_credits;
+	size_t dc_seq_credits;
 	TAILQ_ENTRY(usdf_rdm_connection) dc_tx_link;
-	struct usdf_rdm_qe *dc_hash_next;
+
+	SLIST_ENTRY(usdf_rdm_connection) dc_addr_link;
+	struct usdf_rdm_connection *dc_hash_next;
 };
 
 int usdf_rdm_post_recv(struct usdf_rx *rx, void *buf, size_t len);
 int usdf_rdm_fill_tx_attr(struct fi_tx_attr *txattr);
 int usdf_rdm_fill_rx_attr(struct fi_rx_attr *rxattr);
 int usdf_cq_rdm_poll(struct usd_cq *ucq, struct usd_completion *comp);
-void usdf_rdm_ep_timeout(void *vep);
+void usdf_rdm_rdc_timeout(void *vrdc);
 
 void usdf_rdm_hcq_progress(struct usdf_cq_hard *hcq);
 void usdf_rdm_tx_progress(struct usdf_tx *tx);

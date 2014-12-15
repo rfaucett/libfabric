@@ -127,7 +127,7 @@ usdf_av_alloc_dest(struct usdf_dest **dest_o)
 	if (dest == NULL) {
 		return -errno;
 	}
-	TAILQ_INIT(&dest->ds_rdm_tx_list);
+	SLIST_INIT(&dest->ds_rdm_rdc_list);
 
 	*dest_o = dest;
 	return 0;
@@ -157,7 +157,7 @@ usdf_av_insert_progress(void *v)
 	TAILQ_FOREACH_SAFE(req, tmpreq, &insert->avi_req_list, avr_link) {
 
 		dest = req->avr_dest;
-		eth = &dest->ds_dest.ds_udp.u_hdr.uh_eth.ether_dhost[0];
+		eth = &dest->ds_dest.ds_dest.ds_udp.u_hdr.uh_eth.ether_dhost[0];
 		ret = usnic_arp_lookup(dap->uda_ifname,
 				req->avr_daddr_be, fp->fab_arp_sockfd, eth);
 
@@ -297,7 +297,7 @@ usdf_am_insert_async(struct fid_av *fav, const void *addr, size_t count,
 				ret = -FI_ENOMEM;
 				goto fail;
 			}
-			usd_fill_udp_dest(req->avr_dest, dap,
+			usd_fill_udp_dest(&req->avr_dest->ds_dest, dap,
 					sin->sin_addr.s_addr, sin->sin_port);
 
 			TAILQ_INSERT_TAIL(&insert->avi_req_list, req, avr_link);
@@ -329,7 +329,7 @@ usdf_am_insert_sync(struct fid_av *fav, const void *addr, size_t count,
 	const struct sockaddr_in *sin;
 	struct usdf_av *av;
 	struct usd_dest *u_dest;
-	struct usdf_dest *dest;
+	struct usdf_dest *dest = dest;	// supress uninit
 	int ret_count;
 	int ret;
 	int i;
@@ -350,14 +350,14 @@ usdf_am_insert_sync(struct fid_av *fav, const void *addr, size_t count,
 			ret = usd_create_dest(av->av_domain->dom_dev,
 				sin->sin_addr.s_addr, sin->sin_port,
 				&u_dest);
+		}
+		if (ret == 0) {
 			dest->ds_dest = *u_dest;
 			free(u_dest);
-		}
-		if (ret != 0) {
-			fi_addr[i] = FI_ADDR_NOTAVAIL;
-		} else {
 			fi_addr[i] = (fi_addr_t)dest;
 			++ret_count;
+		} else {
+			fi_addr[i] = FI_ADDR_NOTAVAIL;
 		}
 		++sin;
 	}

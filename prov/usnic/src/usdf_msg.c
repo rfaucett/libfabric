@@ -346,10 +346,10 @@ usdf_msg_send_segment(struct usdf_tx *tx, struct usdf_ep *ep)
 
 		/* add packet lengths */
 		sge_len = resid;
-		hdr->ip.tot_len = htons(
+		hdr->hdr.uh_ip.tot_len = htons(
 				sge_len + sizeof(struct rudp_pkt) -
 				sizeof(struct ether_header));
-		hdr->udp.len = htons(
+		hdr->hdr.uh_udp.len = htons(
 				(sizeof(struct rudp_pkt) -
 				 sizeof(struct ether_header) -
 				 sizeof(struct iphdr)) + sge_len);
@@ -413,16 +413,16 @@ usdf_msg_send_segment(struct usdf_tx *tx, struct usdf_ep *ep)
 		/* add packet lengths */
 		sent = ep->ep_domain->dom_fabric->fab_dev_attrs->uda_mtu -
 			space;
-		hdr->ip.tot_len = htons(
+		hdr->hdr.uh_ip.tot_len = htons(
 				sent + sizeof(struct rudp_pkt) -
 				sizeof(struct ether_header));
-		hdr->udp.len = htons(
+		hdr->hdr.uh_udp.len = htons(
 				(sizeof(struct rudp_pkt) -
 				 sizeof(struct ether_header) -
 				 sizeof(struct iphdr)) + sent);
 if (0) {
 if ((random() % 177) == 0 && resid == 0) {
-	hdr->eth.ether_type = 0;
+	hdr->hdr.uh_eth.ether_type = 0;
 //printf("BORK seq %u\n", ep->e.msg.ep_next_tx_seq);
 }
 }
@@ -494,10 +494,10 @@ usdf_msg_send_ack(struct usdf_tx *tx, struct usdf_ep *ep)
 	}
 
 	/* add packet lengths */
-	hdr->ip.tot_len = htons(
+	hdr->hdr.uh_ip.tot_len = htons(
 			sizeof(struct rudp_pkt) -
 			sizeof(struct ether_header));
-	hdr->udp.len = htons(sizeof(struct rudp_pkt) -
+	hdr->hdr.uh_udp.len = htons(sizeof(struct rudp_pkt) -
 			 sizeof(struct ether_header) - sizeof(struct iphdr));
 
 	last_post = _usd_post_send_one(wq, hdr, sizeof(*hdr), 1);

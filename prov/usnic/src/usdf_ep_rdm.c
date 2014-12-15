@@ -575,7 +575,6 @@ usdf_ep_rdm_close(fid_t fid)
 	if (ep->ep_eq != NULL) {
 		atomic_dec(&ep->ep_eq->eq_refcnt);
 	}
-	usdf_timer_free(ep->ep_domain->dom_fabric, ep->e.rdm.ep_ack_timer);
 	
 	free(ep);
 	return 0;
@@ -630,7 +629,6 @@ usdf_ep_rdm_open(struct fid_domain *domain, struct fi_info *info,
 	    struct fid_ep **ep_o, void *context)
 {
 	struct usdf_domain *udp;
-	struct usdf_fabric *fp;
 	struct usdf_tx *tx;
 	struct usdf_rx *rx;
 	struct usdf_ep *ep;
@@ -644,7 +642,6 @@ usdf_ep_rdm_open(struct fid_domain *domain, struct fi_info *info,
 	}
 
 	udp = dom_ftou(domain);
-	fp = udp->dom_fabric;
 
 	/* allocate peer table if not done */
 	if (udp->dom_peer_tab == NULL) {
@@ -676,12 +673,6 @@ usdf_ep_rdm_open(struct fid_domain *domain, struct fi_info *info,
 	TAILQ_INIT(&ep->e.rdm.ep_sent_wqe);
 	--ep->e.rdm.ep_last_rx_ack;
 
-	ret = usdf_timer_alloc(usdf_rdm_ep_timeout, ep,
-			&ep->e.rdm.ep_ack_timer);
-	if (ret != 0) {
-		goto fail;
-	}
-
 	/* implicitly create TX context if not to be shared */
 	if (info->ep_attr == NULL ||
 	    info->ep_attr->tx_ctx_cnt != FI_SHARED_CONTEXT) {
@@ -705,9 +696,8 @@ usdf_ep_rdm_open(struct fid_domain *domain, struct fi_info *info,
 			ret = usdf_rdm_fill_tx_attr(&tx->tx_attr);
 		}
 		TAILQ_INIT(&tx->t.rdm.tx_free_wqe);
-		TAILQ_INIT(&tx->t.rdm.tx_ep_ready);
-		TAILQ_INIT(&tx->t.rdm.tx_ep_blocked);
-		TAILQ_INIT(&tx->t.rdm.tx_ep_have_acks);
+		TAILQ_INIT(&tx->t.rdm.tx_rdc_ready);
+		TAILQ_INIT(&tx->t.rdm.tx_rdc_have_acks);
 
 		ep->ep_tx = tx;
 		atomic_inc(&tx->tx_refcnt);
@@ -726,7 +716,7 @@ usdf_ep_rdm_open(struct fid_domain *domain, struct fi_info *info,
 		rx->rx_fid.fid.fclass = FI_CLASS_RX_CTX;
 		atomic_init(&rx->rx_refcnt, 0);
 		rx->rx_domain = udp;
-		rx->rx_tx = tx;
+		rx->r.rdm.rx_tx = tx;
 		atomic_inc(&udp->dom_refcnt);
 		if (info->rx_attr != NULL) {
 			ret = usdf_rdm_fill_rx_attr(info->rx_attr);
@@ -757,12 +747,6 @@ fail:
 	if (tx != NULL) {
 		free(tx);
 		atomic_dec(&udp->dom_refcnt);
-	}
-	if (ep != NULL) {
-		if (ep->e.rdm.ep_ack_timer != NULL) {
-			usdf_timer_free(fp, ep->e.rdm.ep_ack_timer);
-		}
-		free(ep);
 	}
 	return ret;
 }

@@ -123,8 +123,9 @@ struct usdf_domain {
 	pthread_spinlock_t dom_progress_lock;
 	TAILQ_HEAD(,usdf_tx) dom_tx_ready;
 	TAILQ_HEAD(,usdf_cq_hard) dom_hcq_list;
-	struct usdf_rdm_qe *dom_rqe_hashtab;
-	struct usdf_rdm_tx_dest *dom_txd_hashtab;
+
+	struct usdf_rdm_connection **dom_rdc_hashtab;
+	SLIST_HEAD(,usdf_rdm_connection) dom_rdc_free;
 
 	/* used only by connected endpoints */
 	struct usdf_ep **dom_peer_tab;
@@ -181,8 +182,8 @@ struct usdf_tx {
 			atomic_t tx_next_msg_id;
 			struct usdf_rdm_qe *tx_wqe_buf;
 			TAILQ_HEAD(,usdf_rdm_qe) tx_free_wqe;
-			TAILQ_HEAD(,usdf_rdm_tx_dest) tx_txd_ready;
-			TAILQ_HEAD(,usdf_rdm_tx_dest) tx_txd_free;
+			TAILQ_HEAD(,usdf_rdm_connection) tx_rdc_ready;
+			TAILQ_HEAD(,usdf_rdm_connection) tx_rdc_have_acks;
 
 			struct usdf_timer *tx_ack_timer;
 		} rdm;
@@ -258,7 +259,7 @@ struct usdf_ep {
 		struct {
 
 			struct usdf_connreq *ep_connreq;
-			struct usdf_dest *ep_dest;
+			struct usd_dest *ep_dest;
 			uint32_t ep_rem_peer_id;
 			uint32_t ep_lcl_peer_id;
 
