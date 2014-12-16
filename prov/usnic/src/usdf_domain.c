@@ -269,7 +269,6 @@ usdf_domain_open(struct fid_fabric *fabric, struct fi_info *info,
 	if (ret != 0) {
 		goto fail;
 	}
-printf("opened domain for %s\n", info->fabric_attr->name);
 
 	udp->dom_fabric = fp;
 	LIST_INSERT_HEAD(&fp->fab_domain_list, udp, dom_link);

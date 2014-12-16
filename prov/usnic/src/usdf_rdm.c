@@ -681,7 +681,7 @@ usdf_rdm_send_segment(struct usdf_tx *tx, struct usdf_rdm_connection *rdc)
 if (0) {
 if ((random() % 177) == 0 && resid == 0) {
 	hdr->hdr.uh_eth.ether_type = 0;
-//printf("BORK seq %u\n", wqe->r.tx.rd_tx_next_seq);
+//printf("BORK seq %u, ID %u\n", rdc->dc_next_tx_seq, ntohl(wqe->rd_msg_id_be));
 }
 }
 
@@ -881,7 +881,7 @@ usdf_rdm_check_seq(struct usdf_rdm_connection *rdc, struct rudp_pkt *pkt)
 	seq = ntohs(pkt->msg.m.rc_data.seqno);
 
 	/* Drop bad seq, send NAK if seq from the future */
-//printf("RXSEQ %u expect %u\n", seq, rdc->dc_next_rx_seq);
+//printf("RXSEQ %u expect %u, (ID %u)\n", seq, rdc->dc_next_rx_seq, ntohl(pkt->msg.msg_id));
 	if (seq != rdc->dc_next_rx_seq) {
 		if (RUDP_SEQ_GT(seq, rdc->dc_next_rx_seq)) {
 			rdc->dc_send_nak = 1;
@@ -940,10 +940,9 @@ usdf_rdm_process_ack(struct usdf_rdm_connection *rdc,
 					wqe, rd_link);
 
 				/* prepare for next message */
+				rdc->dc_next_tx_seq = 0;
+				rdc->dc_last_rx_ack = rdc->dc_next_tx_seq - 1;
 				if (!TAILQ_EMPTY(&rdc->dc_wqe_posted)) {
-					rdc->dc_next_tx_seq = 0;
-					rdc->dc_last_rx_ack =
-						rdc->dc_next_tx_seq - 1;
 					usdf_rdm_rdc_ready(rdc, tx);
 				}
 			}
@@ -965,6 +964,7 @@ usdf_rdm_process_nak(struct usdf_rdm_connection *rdc, struct usdf_tx *tx,
 
 	/* Ignore NAKs of future packets */
 	/* XXX or non-matching msg id */
+//printf("NAK %u, next = %u\n", seq, rdc->dc_next_tx_seq);
 	if (RUDP_SEQ_GE(seq, rdc->dc_next_tx_seq)) {
 		return;
 	}
@@ -974,14 +974,20 @@ usdf_rdm_process_nak(struct usdf_rdm_connection *rdc, struct usdf_tx *tx,
 	 */
 	if (!TAILQ_EMPTY(&rdc->dc_wqe_sent)) {
 		wqe = TAILQ_FIRST(&rdc->dc_wqe_sent);
+//printf("NAK on send wqe %p\n", wqe);
+		TAILQ_REMOVE(&rdc->dc_wqe_sent, wqe, rd_link);
+		TAILQ_INSERT_HEAD(&rdc->dc_wqe_posted, wqe, rd_link);
 	} else if (!TAILQ_EMPTY(&rdc->dc_wqe_posted)) {
 		wqe = TAILQ_FIRST(&rdc->dc_wqe_posted);
+//printf("NAK on posted wqe %p\n", wqe);
 	} else {
+//printf("NAK Nothing send or posted\n");
 		return;
 	}
 
 	/* reset WQE to old sequence # */
 	rewind = RUDP_SEQ_DIFF(rdc->dc_next_tx_seq, seq);
+//printf("rewind = 1\n");
 	if (rewind > 0) {
 		rdc->dc_seq_credits = USDF_RUDP_SEQ_CREDITS;
 		rdc->dc_next_tx_seq = seq;

@@ -658,7 +658,6 @@ usdf_getinfo(uint32_t version, const char *node, const char *service,
 		}
 		if (flags & FI_SOURCE) {
 			src = (struct sockaddr_in *)ai->ai_addr;
-printf("FI_SOURCE: port = %d\n", htons(src->sin_port));
 		} else {
 			dest = (struct sockaddr_in *)ai->ai_addr;
 		}
