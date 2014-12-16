@@ -489,6 +489,7 @@ usdf_rdm_send(struct fid_ep *fep, const void *buf, size_t len, void *desc,
 	usdf_rdm_rdc_ready(rdc, tx);
 
 	pthread_spin_unlock(&udp->dom_progress_lock);
+//printf("SEND posted len=%lu\n", len);
 
 	usdf_domain_progress(udp);
 
@@ -557,7 +558,7 @@ usdf_rdm_send_segment(struct usdf_tx *tx, struct usdf_rdm_connection *rdc)
 	size_t resid;
 	const uint8_t *cur_ptr;
 	const uint8_t *send_ptr;
-	size_t sge_len;
+	size_t sent;
 	uint8_t *ptr;
 	struct usd_wq_post_info *info;
 	uint16_t opcode;
@@ -578,6 +579,8 @@ usdf_rdm_send_segment(struct usdf_tx *tx, struct usdf_rdm_connection *rdc)
 
 	if (cur_ptr == wqe->rd_iov[0].iov_base) {
 		opcode = RUDP_OP_FIRST;
+	} else {
+		opcode = RUDP_OP_MID;
 	}
 
 	if (resid < USD_SEND_MAX_COPY - sizeof(*hdr)) {
@@ -588,7 +591,7 @@ usdf_rdm_send_segment(struct usdf_tx *tx, struct usdf_rdm_connection *rdc)
 		++rdc->dc_next_tx_seq;
 
 		ptr = (uint8_t *)(hdr + 1);
-		sge_len = resid;
+		sent = resid;
 		while (resid > 0) {
 			memcpy(ptr, cur_ptr, cur_resid);
 			ptr += wqe->rd_iov_resid;
@@ -600,15 +603,16 @@ usdf_rdm_send_segment(struct usdf_tx *tx, struct usdf_rdm_connection *rdc)
 
 		/* add packet lengths */
 		hdr->hdr.uh_ip.tot_len = htons(
-				sge_len + sizeof(struct rudp_pkt) -
+				sent + sizeof(struct rudp_pkt) -
 				sizeof(struct ether_header));
 		hdr->hdr.uh_udp.len = htons(
 				(sizeof(struct rudp_pkt) -
 				 sizeof(struct ether_header) -
-				 sizeof(struct iphdr)) + sge_len);
+				 sizeof(struct iphdr)) + sent);
+//printf("SEND 1seg=%lu\n", sent);
 
 		index = _usd_post_send_one(wq, hdr,
-				sge_len + sizeof(*hdr), 1);
+				sent + sizeof(*hdr), 1);
 	} else {
 		struct vnic_wq *vwq;
 		u_int8_t offload_mode = 0, eop;
@@ -617,7 +621,7 @@ usdf_rdm_send_segment(struct usdf_tx *tx, struct usdf_rdm_connection *rdc)
 		struct wq_enet_desc *desc;
 		size_t space;
 		size_t num_sge;
-		size_t sent;
+		size_t sge_len;
 
 		vwq = &wq->uwq_vnic_wq;
 		desc = wq->uwq_next_desc;
@@ -665,7 +669,8 @@ usdf_rdm_send_segment(struct usdf_tx *tx, struct usdf_rdm_connection *rdc)
 
 		/* add packet lengths */
 		sent = tx->tx_domain->dom_fabric->fab_dev_attrs->uda_mtu -
-			space;
+			sizeof(*hdr) - space;
+//printf("SEND sent=%lu resid=%lu\n", sent, resid);
 		hdr->hdr.uh_ip.tot_len = htons(
 				sent + sizeof(struct rudp_pkt) -
 				sizeof(struct ether_header));
@@ -700,7 +705,7 @@ if ((random() % 177) == 0 && resid == 0) {
 
 	info = &wq->uwq_post_info[index];
 	info->wp_context = tx;
-	info->wp_len = sge_len;
+	info->wp_len = sent;
 
 	/* If send complete, wait for last ack on this message */
 	if (resid == 0) {
@@ -738,10 +743,12 @@ usdf_rdm_send_ack(struct usdf_tx *tx, struct usdf_rdm_connection *rdc)
 		seq = rdc->dc_next_rx_seq;
 		hdr->msg.m.nak.nak_seq = htons(seq);
 		rdc->dc_send_nak = 0;
+//printf("SEND NAK seq=%d\n", seq);
 	} else {
 		hdr->msg.opcode = htons(RUDP_OP_ACK);
 		seq = rdc->dc_next_rx_seq - 1;
 		hdr->msg.m.ack.ack_seq = htons(seq);
+//printf("SENDACK seq=%d\n", seq);
 	}
 
 	/* add packet lengths */
@@ -839,6 +846,7 @@ usdf_rdm_recv_complete(struct usdf_rx *rx, struct usdf_rdm_connection *rdc,
 {
 	struct usdf_cq_hard *hcq;
 
+//printf("RECV complere len=%lu\n", rqe->rd_length);
 	hcq = rx->r.rdm.rx_hcq;
 	hcq->cqh_post(hcq, rqe->rd_context, rqe->rd_length);
 
@@ -873,6 +881,7 @@ usdf_rdm_check_seq(struct usdf_rdm_connection *rdc, struct rudp_pkt *pkt)
 	seq = ntohs(pkt->msg.m.rc_data.seqno);
 
 	/* Drop bad seq, send NAK if seq from the future */
+//printf("RXSEQ %u expect %u\n", seq, rdc->dc_next_rx_seq);
 	if (seq != rdc->dc_next_rx_seq) {
 		if (RUDP_SEQ_GT(seq, rdc->dc_next_rx_seq)) {
 			rdc->dc_send_nak = 1;
@@ -899,6 +908,7 @@ usdf_rdm_process_ack(struct usdf_rdm_connection *rdc,
 
 	/* don't try to ACK what we don't think we've sent */
 	max_ack = rdc->dc_next_tx_seq - 1;
+//printf("ACK %u max = %u\n", seq, max_ack);
 	if (RUDP_SEQ_GT(seq, max_ack)) {
 		seq = max_ack;
 	}
@@ -1001,6 +1011,7 @@ usdf_rdm_rdc_timeout(void *vrdc)
 	pthread_spin_lock(&udp->dom_progress_lock);
 
 	nak = rdc->dc_last_rx_ack + 1;
+//printf("TIMEOUT nak=%u\n", nak);
 	usdf_rdm_process_nak(rdc, rdc->dc_tx, nak);
 
 	pthread_spin_unlock(&udp->dom_progress_lock);
@@ -1057,6 +1068,7 @@ usdf_rdm_handle_recv(struct usdf_domain *udp, struct usd_completion *comp)
 	if (rdc == NULL) {
 		goto repost;
 	}
+//printf("RX opcode=%u\n", opcode);
 
 	switch (opcode) {
 	case RUDP_OP_ACK:
