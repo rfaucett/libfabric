@@ -712,11 +712,6 @@ usdf_ep_rdm_open(struct fid_domain *domain, struct fi_info *info,
 	ep->ep_caps = info->caps;
 	ep->ep_mode = info->mode;
 
-	ep->e.rdm.ep_seq_credits = USDF_RUDP_SEQ_CREDITS;
-	TAILQ_INIT(&ep->e.rdm.ep_posted_wqe);
-	TAILQ_INIT(&ep->e.rdm.ep_sent_wqe);
-	--ep->e.rdm.ep_last_rx_ack;
-
 	/* implicitly create TX context if not to be shared */
 	if (info->ep_attr == NULL ||
 	    info->ep_attr->tx_ctx_cnt != FI_SHARED_CONTEXT) {
@@ -747,7 +742,6 @@ usdf_ep_rdm_open(struct fid_domain *domain, struct fi_info *info,
 		atomic_inc(&tx->tx_refcnt);
 		atomic_inc(&udp->dom_refcnt);
 	}
-	TAILQ_INIT(&ep->e.rdm.ep_posted_wqe);
 
 	/* implicitly create RX context if not to be shared */
 	if (info->ep_attr == NULL ||

@@ -129,7 +129,6 @@ usdf_rdm_rdc_addr_lookup(struct usdf_domain *udp, uint16_t *ipaddr,
 	hash_index = usdf_rdm_rdc_hash_helper(ipaddr, port);
 
 	rdc = udp->dom_rdc_hashtab[hash_index];
-printf("addr lookup %p addr=%x, port=%d, hash=%u\n", rdc, *(uint32_t *)ipaddr, port, hash_index);
 
 	while (rdc != NULL) {
 		if (usdf_rdm_rdc_addr_match(rdc, ipaddr, port)) {
@@ -153,7 +152,6 @@ usdf_rdm_rdc_hdr_lookup(struct usdf_domain *udp, struct usd_udp_hdr *hdr)
 	hash_index = usdf_rdm_rdc_hash_hdr(hdr);
 
 	rdc = udp->dom_rdc_hashtab[hash_index];
-printf("lookup %p addr=%x, port=%d, hash=%u\n", rdc, hdr->uh_ip.daddr, hdr->uh_udp.dest, hash_index);
 
 	while (rdc != NULL) {
 		if (usdf_rdm_rdc_hdr_match(rdc, hdr)) {
@@ -176,7 +174,6 @@ usdf_rdm_rdc_insert(struct usdf_domain *udp, struct usdf_rdm_connection *rdc)
 	hash_index = usdf_rdm_rdc_hash_helper(
 		(uint16_t *)&rdc->dc_hdr.uh_ip.daddr,
 		rdc->dc_hdr.uh_udp.dest);
-printf("insert %p addr=%x, port=%d, hash=%u\n", rdc, rdc->dc_hdr.uh_ip.daddr, rdc->dc_hdr.uh_udp.dest, hash_index);
 
 	rdc->dc_hash_next = udp->dom_rdc_hashtab[hash_index];
 	udp->dom_rdc_hashtab[hash_index] = rdc;
@@ -423,7 +420,6 @@ usdf_rdm_recv(struct fid_ep *fep, void *buf, size_t len,
 	rqe->rd_cur_ptr = buf;
 	rqe->rd_iov_resid = len;
 	rqe->rd_length = 0;
-printf("RDM posted %lu byte recv\n", len);
 
 	TAILQ_INSERT_TAIL(&rx->r.rdm.rx_posted_rqe, rqe, rd_link);
 
@@ -467,7 +463,6 @@ usdf_rdm_send(struct fid_ep *fep, const void *buf, size_t len, void *desc,
 		pthread_spin_unlock(&udp->dom_progress_lock);
 		return -FI_EAGAIN;
 	}
-printf("send rdc=%p, len=%lu\n", rdc, len);
 
 	wqe = TAILQ_FIRST(&tx->t.rdm.tx_free_wqe);
 	TAILQ_REMOVE(&tx->t.rdm.tx_free_wqe, wqe, rd_link);
@@ -544,7 +539,9 @@ usdf_rdm_send_sent(struct usdf_tx *tx, struct usdf_rdm_connection *rdc)
 	wqe = TAILQ_FIRST(&rdc->dc_wqe_posted);
 	TAILQ_REMOVE(&rdc->dc_wqe_posted, wqe, rd_link);
 	TAILQ_INSERT_TAIL(&rdc->dc_wqe_sent, wqe, rd_link);
-printf("wqe %p all pkts sent\n", wqe);
+
+	/* remove this RDC from TX */
+	TAILQ_REMOVE(&tx->t.rdm.tx_rdc_ready, rdc, dc_tx_link);
 }
 
 static inline void
@@ -707,6 +704,7 @@ if ((random() % 177) == 0 && resid == 0) {
 
 	/* If send complete, wait for last ack on this message */
 	if (resid == 0) {
+		wqe->rd_resid = 0;
 		usdf_rdm_send_sent(tx, rdc);
 	} else {
 		wqe->rd_resid = resid;
@@ -733,7 +731,6 @@ usdf_rdm_send_ack(struct usdf_tx *tx, struct usdf_rdm_connection *rdc)
 	hdr = (struct rudp_pkt *) (wq->uwq_copybuf +
 			wq->uwq_post_index * USD_SEND_MAX_COPY);
 
-printf("Sending ACK to port %d\n", ntohs(rdc->dc_hdr.uh_udp.dest));
 	memcpy(hdr, &rdc->dc_hdr, sizeof(struct usd_udp_hdr));
 
 	if (rdc->dc_send_nak) {
@@ -754,7 +751,6 @@ printf("Sending ACK to port %d\n", ntohs(rdc->dc_hdr.uh_udp.dest));
 	hdr->hdr.uh_udp.len = htons(sizeof(struct rudp_pkt) -
 			 sizeof(struct ether_header) - sizeof(struct iphdr));
 
-hex(hdr, sizeof(*hdr));
 	last_post = _usd_post_send_one(wq, hdr, sizeof(*hdr), 1);
 
 	info = &wq->uwq_post_info[last_post];
@@ -795,7 +791,6 @@ usdf_rdm_tx_progress(struct usdf_tx *tx)
 	while (qp->uq_wq.uwq_send_credits > 1 &&
 			!TAILQ_EMPTY(&tx->t.rdm.tx_rdc_have_acks)) {
 		rdc = TAILQ_FIRST(&tx->t.rdm.tx_rdc_have_acks);
-printf("sending ACK for RDC %p on %p\n", rdc, tx);
 		TAILQ_REMOVE_MARK(&tx->t.rdm.tx_rdc_have_acks,
 				rdc, dc_ack_link);
 
@@ -814,11 +809,7 @@ printf("sending ACK for RDC %p on %p\n", rdc, tx);
 		usdf_rdm_send_segment(tx, rdc);
 
 		--rdc->dc_seq_credits;
-		/* If unconnected, cannot start next send until previous 
-		 * is fully ACKed
-		 */
-		if (!TAILQ_EMPTY(&rdc->dc_wqe_sent) ||
-		    TAILQ_EMPTY(&rdc->dc_wqe_posted)) {
+		if (TAILQ_EMPTY(&rdc->dc_wqe_posted)) {
 			TAILQ_REMOVE_MARK(&tx->t.rdm.tx_rdc_ready,
 					rdc, dc_tx_link);
 		} else {
@@ -851,6 +842,7 @@ usdf_rdm_recv_complete(struct usdf_rx *rx, struct usdf_rdm_connection *rdc,
 	hcq = rx->r.rdm.rx_hcq;
 	hcq->cqh_post(hcq, rqe->rd_context, rqe->rd_length);
 
+	TAILQ_INSERT_HEAD(&rx->r.rdm.rx_free_rqe, rqe, rd_link);
 	rdc->dc_cur_rqe = NULL;
 }
 
@@ -863,7 +855,6 @@ usdf_rdm_rdc_has_ack(struct usdf_rdm_connection *rdc)
 	if (!TAILQ_ON_LIST(rdc, dc_ack_link)) {
 		tx = rdc->dc_tx;
 		udp = tx->tx_domain;
-printf("Adding RDC %p to have_acks for %p\n", rdc, tx);
 		TAILQ_INSERT_TAIL(&tx->t.rdm.tx_rdc_have_acks, rdc,
 				dc_ack_link);
 		/* Add TX to domain list if not present */
@@ -880,7 +871,6 @@ usdf_rdm_check_seq(struct usdf_rdm_connection *rdc, struct rudp_pkt *pkt)
 	int ret;
 
 	seq = ntohs(pkt->msg.m.rc_data.seqno);
-printf("seq = %u, expect = %u\n", seq, rdc->dc_next_rx_seq);
 
 	/* Drop bad seq, send NAK if seq from the future */
 	if (seq != rdc->dc_next_rx_seq) {
@@ -906,7 +896,6 @@ usdf_rdm_process_ack(struct usdf_rdm_connection *rdc,
 	struct usdf_fabric *fp;
 	uint16_t max_ack;
 	unsigned credits;
-printf("ACK %u on RDC %p\n", seq, rdc);
 
 	/* don't try to ACK what we don't think we've sent */
 	max_ack = rdc->dc_next_tx_seq - 1;
@@ -949,6 +938,7 @@ printf("ACK %u on RDC %p\n", seq, rdc);
 				}
 			}
 		}
+
 		usdf_timer_cancel(fp, rdc->dc_timer);
 	} else {
 		usdf_timer_reset(fp, rdc->dc_timer, USDF_RUDP_ACK_TIMEOUT);
@@ -1064,7 +1054,6 @@ usdf_rdm_handle_recv(struct usdf_domain *udp, struct usd_completion *comp)
 	opcode = ntohs(pkt->msg.opcode);
 
 	rdc = usdf_rdm_rdc_rx_get(rx, pkt);
-printf("RECV, rdc=%p, opcode = %d\n", rdc, opcode);
 	if (rdc == NULL) {
 		goto repost;
 	}
@@ -1085,11 +1074,6 @@ printf("RECV, rdc=%p, opcode = %d\n", rdc, opcode);
 		goto repost;
 	}
 
-	ret = usdf_rdm_check_seq(rdc, pkt);
-	if (ret != 0) {
-		goto repost;
-	}
-
 	/* Find RQE for this pkt */
 	if (opcode & RUDP_OP_FIRST) {
 		if (TAILQ_EMPTY(&rx->r.rdm.rx_posted_rqe)) {
@@ -1099,8 +1083,14 @@ printf("RECV, rdc=%p, opcode = %d\n", rdc, opcode);
 		rqe = TAILQ_FIRST(&rx->r.rdm.rx_posted_rqe);
 
 		rdc->dc_cur_rqe = rqe;
+		rdc->dc_next_rx_seq = 0;
 	} else {
 		rqe = rdc->dc_cur_rqe;
+	}
+
+	ret = usdf_rdm_check_seq(rdc, pkt);
+	if (ret != 0) {
+		goto repost;
 	}
 
 	/* Consume the data in the packet */

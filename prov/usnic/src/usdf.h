@@ -282,17 +282,6 @@ struct usdf_ep {
 			int ep_sock;
 			struct usdf_av *ep_av;
 
-			TAILQ_HEAD(usdf_rdm_qe_head, usdf_rdm_qe) ep_posted_wqe;
-			TAILQ_HEAD(,usdf_rdm_qe) ep_sent_wqe;
-			uint32_t ep_fairness_credits;
-			uint32_t ep_seq_credits;
-			uint16_t ep_next_tx_seq;
-			uint16_t ep_last_rx_ack;
-			int ep_send_nak;
-
-			struct usdf_rdm_qe *ep_cur_recv;
-			uint16_t ep_next_rx_seq;
-
 		} rdm;
 	 } e;
 };
