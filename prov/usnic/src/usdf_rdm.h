@@ -55,10 +55,11 @@
 
 #define USDF_RDM_RUDP_SEQ_CREDITS 256
 
+#define USDF_RDM_RDC_TIMEOUT 1000 /* ms */
+
 struct usdf_rdm_qe {
 	void *rd_context;
 	uint32_t rd_msg_id_be;
-	// struct usdf_tx *rd_tx;
 
 	struct iovec rd_iov[USDF_RDM_MAX_SGE];
 	size_t rd_last_iov;
@@ -78,10 +79,13 @@ struct usdf_rdm_qe {
  * RDM connection state
  */
 enum {
-	USDF_DCS_UNCONNECTED,
-	USDF_DCS_CONNECTING,
-	USDF_DCS_CONNECTED
+	USDF_DCS_UNCONNECTED = 0,
+	USDF_DCS_CONNECTING = 1,
+	USDF_DCS_CONNECTED = 2
 };
+
+#define USDF_DCF_STATE_BITS 0x03
+#define USDF_DCF_NEW_RX 0x04
 
 /*
  * We're only connectionless to the app.
@@ -92,16 +96,18 @@ struct usdf_rdm_connection {
 
 	struct usdf_tx *dc_tx;
 	struct usd_udp_hdr dc_hdr;
-	uint16_t dc_state;
+	uint16_t dc_flags;
 	struct usdf_timer_entry *dc_timer;
 	
 	/* RX state */
+	uint32_t dc_msg_id;
 	struct usdf_rdm_qe *dc_cur_rqe;
 	uint16_t dc_send_nak;
 	uint16_t dc_next_rx_seq;
 	TAILQ_ENTRY(usdf_rdm_connection) dc_ack_link;
 
 	/* TX state */
+	struct usdf_dest *dc_dest;
 	TAILQ_HEAD(,usdf_rdm_qe) dc_wqe_posted;
 	TAILQ_HEAD(,usdf_rdm_qe) dc_wqe_sent;
 	uint16_t dc_next_tx_seq;

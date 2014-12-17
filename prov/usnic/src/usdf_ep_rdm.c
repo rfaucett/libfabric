@@ -724,7 +724,9 @@ usdf_ep_rdm_open(struct fid_domain *domain, struct fi_info *info,
 		atomic_init(&tx->tx_refcnt, 0);
 		tx->tx_domain = udp;
 		tx->tx_progress = usdf_rdm_tx_progress;
+		atomic_init(&tx->t.rdm.tx_next_msg_id, 1);
 		atomic_inc(&udp->dom_refcnt);
+
 		if (info->tx_attr != NULL) {
 			ret = usdf_rdm_fill_tx_attr(info->tx_attr);
 			if (ret != 0) {
@@ -740,7 +742,6 @@ usdf_ep_rdm_open(struct fid_domain *domain, struct fi_info *info,
 
 		ep->ep_tx = tx;
 		atomic_inc(&tx->tx_refcnt);
-		atomic_inc(&udp->dom_refcnt);
 	}
 
 	/* implicitly create RX context if not to be shared */

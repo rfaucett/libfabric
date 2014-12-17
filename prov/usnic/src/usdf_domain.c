@@ -116,12 +116,16 @@ usdf_dom_rdc_alloc_data(struct usdf_domain *udp)
 		if (rdc == NULL) {
 			return -FI_ENOMEM;
 		}
-		ret = usdf_timer_alloc(usdf_rdm_rdc_timeout, rdc, &rdc->dc_timer);
+		ret = usdf_timer_alloc(usdf_rdm_rdc_timeout, rdc,
+				&rdc->dc_timer);
 		if (ret != 0) {
 			free(rdc);
 			return ret;
 		}
+		rdc->dc_flags = USDF_DCS_UNCONNECTED | USDF_DCF_NEW_RX;
 		rdc->dc_next_rx_seq = 0;
+		rdc->dc_next_tx_seq = 0;
+		rdc->dc_last_rx_ack = rdc->dc_next_tx_seq - 1;
 		TAILQ_INIT(&rdc->dc_wqe_posted);
 		TAILQ_INIT(&rdc->dc_wqe_sent);
 		SLIST_INSERT_HEAD(&udp->dom_rdc_free, rdc, dc_addr_link);

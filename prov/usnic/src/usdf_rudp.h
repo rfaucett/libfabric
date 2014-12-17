@@ -47,6 +47,12 @@
 #define RUDP_SEQ_GT(A, B) (RUDP_SEQ_DIFF((A), (B)) > 0)
 #define RUDP_SEQ_GE(A, B) (RUDP_SEQ_DIFF((A), (B)) >= 0)
 
+#define RUDP_MSGID_DIFF(A, B) ((int32_t)((u_int32_t)(A) - (u_int32_t)(B)))
+#define RUDP_MSGID_LT(A, B) (RUDP_MSGID_DIFF((A), (B)) < 0)
+#define RUDP_MSGID_LE(A, B) (RUDP_MSGID_DIFF((A), (B)) <= 0)
+#define RUDP_MSGID_GT(A, B) (RUDP_MSGID_DIFF((A), (B)) > 0)
+#define RUDP_MSGID_GE(A, B) (RUDP_MSGID_DIFF((A), (B)) >= 0)
+
 enum {
     /* data messages (a bitmask of FIRST and LAST) */
     RUDP_OP_MID     = 0x00,
