@@ -87,7 +87,7 @@ PRINTF("SKIP rdc %p ready due to pending wqe\n", rdc);
 				tx, tx_link);
 		}
 	}
-else printf("RDC %p already on list\n", rdc);
+else PRINTF("RDC %p already on list\n", rdc);
 }
 
 static inline uint16_t
@@ -763,17 +763,17 @@ usdf_rdm_send_ack(struct usdf_tx *tx, struct usdf_rdm_connection *rdc)
 
 	if (rdc->dc_send_nak) {
 		hdr->msg.opcode = htons(RUDP_OP_NAK);
-		seq = rdc->dc_next_rx_seq;
+		seq = rdc->dc_ack_seq + 1;
 		hdr->msg.m.nak.nak_seq = htons(seq);
 		rdc->dc_send_nak = 0;
 PRINTF("TX NAK seq=%d\n", seq);
 	} else {
 		hdr->msg.opcode = htons(RUDP_OP_ACK);
-		seq = rdc->dc_next_rx_seq - 1;
+		seq = rdc->dc_ack_seq;
 		hdr->msg.m.ack.ack_seq = htons(seq);
-PRINTF("TXACK seq=%u:%u\n", seq, rdc->dc_msg_id);
+PRINTF("TXACK seq=%u:%u\n", seq, rdc->dc_rx_msg_id);
 	}
-	hdr->msg.msg_id = htonl(rdc->dc_msg_id);
+	hdr->msg.msg_id = htonl(rdc->dc_ack_msg_id);
 
 	/* add packet lengths */
 	hdr->hdr.uh_ip.tot_len = htons(
@@ -873,7 +873,7 @@ usdf_rdm_recv_complete(struct usdf_rx *rx, struct usdf_rdm_connection *rdc,
 {
 	struct usdf_cq_hard *hcq;
 
-PRINTF("RECV complete ID=%u len=%lu\n", rdc->dc_msg_id, rqe->rd_length);
+PRINTF("RECV complete ID=%u len=%lu\n", rdc->dc_rx_msg_id, rqe->rd_length);
 	hcq = rx->r.rdm.rx_hcq;
 	hcq->cqh_post(hcq, rqe->rd_context, rqe->rd_length);
 
@@ -900,60 +900,98 @@ usdf_rdm_rdc_has_ack(struct usdf_rdm_connection *rdc)
 	}
 }
 
-static inline int
+static inline void
+usdf_set_ack_nak(struct usdf_rdm_connection *rdc, uint32_t msg_id,
+		uint16_t seq, uint16_t nak)
+{
+	/* if newly on list or msg_id > cur, use all new values */
+	if (!TAILQ_ON_LIST(rdc, dc_ack_link) ||
+	    RUDP_MSGID_GT(msg_id, rdc->dc_ack_msg_id)) {
+		rdc->dc_ack_msg_id = msg_id;
+		rdc->dc_ack_seq = seq;
+		rdc->dc_send_nak = nak;
+
+	/* If same msg_id and new seq, use new seq */
+	} else if (msg_id == rdc->dc_ack_msg_id &&
+		   RUDP_SEQ_GE(seq, rdc->dc_ack_seq)) {
+		rdc->dc_ack_seq = seq;
+		rdc->dc_send_nak = nak;
+	}
+		
+	usdf_rdm_rdc_has_ack(rdc);
+}
+
+static inline void
+usdf_set_ack(struct usdf_rdm_connection *rdc, uint32_t msg_id, uint16_t seq)
+{
+	usdf_set_ack_nak(rdc, msg_id, seq, 0);
+}
+
+static inline void
+usdf_set_nak(struct usdf_rdm_connection *rdc, uint32_t msg_id, uint16_t seq)
+{
+	usdf_set_ack_nak(rdc, msg_id, seq, 1);
+}
+
+static inline struct usdf_rdm_qe *
 usdf_rdm_check_seq_id(struct usdf_rdm_connection *rdc, struct usdf_rx *rx,
 		struct rudp_pkt *pkt)
 {
 	uint16_t seq;
 	uint32_t msg_id;
-	int ret;
+	int32_t msg_delta;
+	struct usdf_rdm_qe *rqe;
 
 	seq = ntohs(pkt->msg.m.rc_data.seqno);
 	msg_id = ntohl(pkt->msg.msg_id);
-PRINTF("RXSEQ %u:%u expect %u:%u\n", seq, msg_id, rdc->dc_next_rx_seq, rdc->dc_msg_id);
-
-	/* Start of new message and we are not currently on one? */
-	if (rdc->dc_cur_rqe == NULL) {
-		if ((rdc->dc_flags & USDF_DCF_NEW_RX) != 0 &&
-		    RUDP_MSGID_LE(msg_id, rdc->dc_msg_id)) {
-PRINTF("Old msg ID %u\n", msg_id);
-			ret = -1;
-			goto done;
-		}
-PRINTF("New msg ID = %u\n", msg_id);
-		if (TAILQ_EMPTY(&rx->r.rdm.rx_posted_rqe)) {
-PRINTF("OOPS, no place for it\n");
-			if (msg_id == rdc->dc_msg_id) {
-				usdf_rdm_rdc_has_ack(rdc);
-			}
-			return -1;
-		}
-		rdc->dc_flags &= ~USDF_DCF_NEW_RX;
-		rdc->dc_next_rx_seq = 0;
-		rdc->dc_msg_id = msg_id;
-	}
-
-	/* not for current msg */
-	if (rdc->dc_msg_id != msg_id) {
-PRINTF("bad msg_id\n");
-		return -1;
-	}
-
-	/* Drop bad seq, send NAK if seq from the future */
-	if (seq != rdc->dc_next_rx_seq) {
-		if (RUDP_SEQ_GT(seq, rdc->dc_next_rx_seq)) {
-			rdc->dc_send_nak = 1;
-		}
-		ret = -1;
+	if (rdc->dc_flags & USDF_DCF_NEW_RX) {
+		msg_delta = 1;
 	} else {
-PRINTF("GOOD SEQ!\n");
-		++rdc->dc_next_rx_seq;
-		ret = 0;
+		msg_delta = RUDP_SEQ_DIFF(msg_id, rdc->dc_rx_msg_id);
 	}
-done:
-	usdf_rdm_rdc_has_ack(rdc);
+	rqe = rdc->dc_cur_rqe;
+PRINTF("RXSEQ %u:%u, msg_delt=%d, rqe=%p\n", seq, msg_id, msg_delta, rqe);
 
-	return ret;
+	/* old message ID */
+	if (msg_delta < 0) {
+		return NULL;		/* just DROP */
+
+	/* current message ID */
+	} else if (msg_delta == 0) {
+		if (RUDP_SEQ_LT(seq, rdc->dc_next_rx_seq)) {
+PRINTF("old SEQ, ACK %u\n", (uint16_t)(rdc->dc_next_rx_seq));
+			usdf_set_ack(rdc, msg_id, rdc->dc_next_rx_seq);
+		} else if (seq == rdc->dc_next_rx_seq) {
+PRINTF("old SEQ, ACK %u\n", (uint16_t)(rdc->dc_next_rx_seq));
+			usdf_set_ack(rdc, msg_id, rdc->dc_next_rx_seq);
+			++rdc->dc_next_rx_seq;
+		} else {
+PRINTF("future SEQ, NAK %u\n", rdc->dc_next_rx_seq);
+			usdf_set_nak(rdc, msg_id, rdc->dc_next_rx_seq - 1);
+			rqe = NULL;
+		}
+
+	/* future message ID */ 
+	} else {
+		if (rqe != NULL) {
+			return NULL;	/* DROP */
+		} else if (seq != 0) {
+			usdf_set_nak(rdc, msg_id, -1);
+		} else if (TAILQ_EMPTY(&rx->r.rdm.rx_posted_rqe)) {
+printf("RX overrun?????\n");
+			usdf_set_nak(rdc, msg_id, -1);
+		} else {
+			rqe = TAILQ_FIRST(&rx->r.rdm.rx_posted_rqe);
+			TAILQ_REMOVE(&rx->r.rdm.rx_posted_rqe, rqe, rd_link);
+			rdc->dc_flags &= ~USDF_DCF_NEW_RX;
+			rdc->dc_cur_rqe = rqe;
+			rdc->dc_rx_msg_id = msg_id;
+			usdf_set_ack(rdc, msg_id, 0);
+			rdc->dc_next_rx_seq = 1;
+PRINTF("start new msg, rqe=%p\n", rqe);
+		}
+	}
+	return rqe;
 }
 
 static inline void
@@ -1187,7 +1225,6 @@ usdf_rdm_handle_recv(struct usdf_domain *udp, struct usd_completion *comp)
 	size_t iov_resid;
 	size_t rxlen;
 	size_t copylen;
-	int ret;
 
 	qp = comp->uc_qp;
 	rx = qp->uq_context;
@@ -1217,29 +1254,9 @@ usdf_rdm_handle_recv(struct usdf_domain *udp, struct usd_completion *comp)
 	}
 
 	/* check sequence # and msg_id */
-	ret = usdf_rdm_check_seq_id(rdc, rx, pkt);
-	if (ret != 0) {
-		goto repost;
-	}
-
-	/* Find RQE for this pkt */
-	rqe = rdc->dc_cur_rqe;
+	rqe = usdf_rdm_check_seq_id(rdc, rx, pkt);
 	if (rqe == NULL) {
-		if (opcode & RUDP_OP_FIRST) {
-			if (TAILQ_EMPTY(&rx->r.rdm.rx_posted_rqe)) {
-PRINTF("RX overrun!\n");
-				// XXX - NAK or RNR or something?
-				goto repost;
-			}
-			rqe = TAILQ_FIRST(&rx->r.rdm.rx_posted_rqe);
-			TAILQ_REMOVE(&rx->r.rdm.rx_posted_rqe, rqe, rd_link);
-PRINTF("RX consume rqe %p ID = %u\n", rqe, rdc->dc_msg_id);
-
-			rdc->dc_cur_rqe = rqe;
-		} else {
-PRINTF("NULL RQE??\n"); abort();
-			goto repost;
-		}
+		goto repost;
 	}
 
 	/* Consume the data in the packet */

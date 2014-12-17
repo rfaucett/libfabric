@@ -100,10 +100,12 @@ struct usdf_rdm_connection {
 	struct usdf_timer_entry *dc_timer;
 	
 	/* RX state */
-	uint32_t dc_msg_id;
+	uint32_t dc_rx_msg_id;
 	struct usdf_rdm_qe *dc_cur_rqe;
-	uint16_t dc_send_nak;
 	uint16_t dc_next_rx_seq;
+	uint16_t dc_send_nak;
+	uint32_t dc_ack_msg_id;
+	uint16_t dc_ack_seq;
 	TAILQ_ENTRY(usdf_rdm_connection) dc_ack_link;
 
 	/* TX state */
