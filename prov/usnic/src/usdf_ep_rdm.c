@@ -488,6 +488,9 @@ usdf_ep_rdm_bind(struct fid *fid, struct fid *bfid, uint64_t flags)
 	return 0;
 }
 
+/*
+ * XXX clean up pending transmits
+ */
 static int
 usdf_rdm_rx_ctx_close(fid_t fid)
 {
@@ -521,6 +524,9 @@ usdf_rdm_rx_ctx_close(fid_t fid)
 	return 0;
 }
 
+/*
+ * XXX clean up pending receives
+ */
 static int
 usdf_rdm_tx_ctx_close(fid_t fid)
 {

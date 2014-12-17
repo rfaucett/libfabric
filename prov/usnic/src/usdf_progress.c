@@ -111,7 +111,7 @@ usdf_fabric_progression_thread(void *v)
 		}
 
 		n = epoll_wait(epfd, &ev, 1, sleep_time);
-		if (n == -1) {
+		if (fp->fab_exit || (n == -1 && errno != EINTR)) {
 			pthread_exit(NULL);
 		}
 
@@ -126,10 +126,6 @@ usdf_fabric_progression_thread(void *v)
 
 		/* call timer progress each wakeup */
 		usdf_timer_progress(fp);
-
-		if (fp->fab_exit) {
-			pthread_exit(NULL);
-		}
 	}
 }
 

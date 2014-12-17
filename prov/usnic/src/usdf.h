@@ -126,6 +126,8 @@ struct usdf_domain {
 
 	struct usdf_rdm_connection **dom_rdc_hashtab;
 	SLIST_HEAD(,usdf_rdm_connection) dom_rdc_free;
+	atomic_t dom_rdc_free_cnt;
+	size_t dom_rdc_total;
 
 	/* used only by connected endpoints */
 	struct usdf_ep **dom_peer_tab;

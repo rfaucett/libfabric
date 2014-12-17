@@ -84,8 +84,27 @@ static void
 usdf_dom_rdc_free_data(struct usdf_domain *udp)
 {
 	struct usdf_rdm_connection *rdc;
+	int i;
 
 	if (udp->dom_rdc_hashtab != NULL) {
+
+		pthread_spin_lock(&udp->dom_progress_lock);
+		for (i = 0; i < USDF_RDM_HASH_SIZE; ++i) {
+			rdc = udp->dom_rdc_hashtab[i];
+			while (rdc != NULL) {
+				usdf_timer_reset(udp->dom_fabric,
+						rdc->dc_timer, 0);
+				rdc = rdc->dc_hash_next;
+			}
+		}
+		pthread_spin_unlock(&udp->dom_progress_lock);
+
+		/* XXX probably want a timeout here... */
+		while (atomic_get(&udp->dom_rdc_free_cnt) < 
+		       udp->dom_rdc_total) {
+			pthread_yield();
+		}
+
 		free(udp->dom_rdc_hashtab);
 		udp->dom_rdc_hashtab = NULL;
 	}
@@ -111,6 +130,7 @@ usdf_dom_rdc_alloc_data(struct usdf_domain *udp)
 		return -FI_ENOMEM;
 	}
 	SLIST_INIT(&udp->dom_rdc_free);
+	atomic_init(&udp->dom_rdc_free_cnt, 0);
 	for (i = 0; i < USDF_RDM_FREE_BLOCK; ++i) {
 		rdc = calloc(1, sizeof(*rdc));
 		if (rdc == NULL) {
@@ -129,7 +149,9 @@ usdf_dom_rdc_alloc_data(struct usdf_domain *udp)
 		TAILQ_INIT(&rdc->dc_wqe_posted);
 		TAILQ_INIT(&rdc->dc_wqe_sent);
 		SLIST_INSERT_HEAD(&udp->dom_rdc_free, rdc, dc_addr_link);
+		atomic_inc(&udp->dom_rdc_free_cnt);
 	}
+	udp->dom_rdc_total = USDF_RDM_FREE_BLOCK;
 	return 0;
 }
 

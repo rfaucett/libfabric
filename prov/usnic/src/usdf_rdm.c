@@ -223,6 +223,7 @@ usdf_rdc_alloc(struct usdf_domain *udp)
 	} else {
 		rdc = SLIST_FIRST(&udp->dom_rdc_free);
 		SLIST_REMOVE_HEAD(&udp->dom_rdc_free, dc_addr_link);
+		atomic_dec(&udp->dom_rdc_free_cnt);
 	}
 	return rdc;
 }
@@ -1136,6 +1137,7 @@ usdf_rdm_rdc_timeout(void *vrdc)
 
 	rdc = vrdc;
 	udp = rdc->dc_tx->tx_domain;
+PRINTF("RDC timer fire\n");
 
 	pthread_spin_lock(&udp->dom_progress_lock);
 
@@ -1163,6 +1165,7 @@ usdf_rdm_rdc_timeout(void *vrdc)
 		usdf_rdm_rdc_remove(udp, rdc);
 
 		SLIST_INSERT_HEAD(&udp->dom_rdc_free, rdc, dc_addr_link);
+		atomic_inc(&udp->dom_rdc_free_cnt);
 
 	} else {
 		usdf_timer_set(udp->dom_fabric, rdc->dc_timer,
